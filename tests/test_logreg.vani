@@ -1,0 +1,42 @@
+intent "vani-ml logistic regression: converges to perfect separation on a simple 1D dataset";
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // x < 0 -> class 0, x > 0 -> class 1, with a small margin around 0.
+    // No unary minus in vāṇी -- negatives written as 0.0 - n.
+    let x1: Vec<f64> = vec(0.0 - 3.0, 0.0 - 2.0, 0.0 - 1.0, 0.0 - 0.5, 0.5, 1.0, 2.0, 3.0);
+    let y: Vec<f64> = vec(0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+    let n_obs: i64 = 8;
+    let n_pred: i64 = 1;
+
+    let X: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        push(mut ref X, x1[i]);
+        i = i + 1;
+    }
+    let Xi: Vec<f64> = linreg_add_intercept(ref X, n_obs, n_pred);
+
+    let x0: Vec<f64> = vec(0.0, 0.0);
+    let beta: Vec<f64> = logreg_fit(ref Xi, ref y, n_obs, n_pred + 1, ref x0, 0.1, 2000);
+
+    // The intercept-then-slope layout means beta[1] (the slope on x1)
+    // should be positive -- higher x1 pushes toward class 1.
+    assert beta[1] > 0.0;
+
+    let preds: Vec<f64> = logreg_predict(ref Xi, ref beta, n_obs, n_pred + 1, 0.5);
+    let j: i64 = 0;
+    while j < n_obs {
+        assert preds[j] == y[j];
+        j = j + 1;
+    }
+
+    let probs: Vec<f64> = logreg_predict_proba(ref Xi, ref beta, n_obs, n_pred + 1);
+    // Confident on points far from the boundary.
+    assert probs[0] < 0.05;
+    assert probs[n_obs - 1] > 0.95;
+
+    print "logreg tests passed";
+    return 0;
+}

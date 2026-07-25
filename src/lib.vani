@@ -60,3 +60,105 @@ fn linreg_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: 
 fn linreg_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> f64 {
     return probability::mlr_r_squared(y, y_hat);
 }
+
+// ── Logistic regression ──────────────────────────────────────────────────
+// Binary classification via cross-entropy loss + batch gradient descent.
+//
+// Deliberately NOT built on optimize::gradient_descent_fixed/backtracking:
+// their objective/gradient are fixed `fn(ref Vec<f64>, i64) -> f64`
+// function pointers with no way to thread the training data (X_flat, y)
+// through -- vāṇी closures don't support ref-capturing (see this repo's
+// README / kosh-index/ROADMAP.md's "ML tier" section for the full
+// writeup). So logreg_fit below has its own small fixed-step loop,
+// specialized directly to (X_flat, y, beta) -- same algorithm shape as
+// optimize::gradient_descent_fixed, just not routed through its
+// fn-pointer interface.
+
+// z = X beta, row by row. No vani-matrix dependency for this -- v0.1.0
+// deliberately doesn't declare one (see vani.toml); this is one small
+// O(n_obs*n_pred) loop, not worth a whole dependency.
+// NO #[wcet]: n_obs/n_pred are runtime values.
+// WCET formula: ~20 + n_obs * n_pred * ~5 cycles.
+fn _logreg_linear_combo(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
+    let z: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        let s: f64 = 0.0;
+        let j: i64 = 0;
+        while j < n_pred {
+            s = s + X_flat[i * n_pred + j] * beta[j];
+            j = j + 1;
+        }
+        push(mut ref z, s);
+        i = i + 1;
+    }
+    return z;
+}
+
+// Predicted probabilities: sigmoid(X beta).
+fn logreg_predict_proba(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
+    let z: Vec<f64> = _logreg_linear_combo(X_flat, beta, n_obs, n_pred);
+    let p: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        push(mut ref p, f64_sigmoid(z[i]));
+        i = i + 1;
+    }
+    return p;
+}
+
+// Thresholded 0/1 predictions (threshold typically 0.5).
+fn logreg_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64, threshold: f64) -> Vec<f64> {
+    let p: Vec<f64> = logreg_predict_proba(X_flat, beta, n_obs, n_pred);
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        if p[i] >= threshold {
+            push(mut ref out, 1.0);
+        } else {
+            push(mut ref out, 0.0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Batch gradient descent on cross-entropy loss:
+// grad = (1/n_obs) * X^T (sigmoid(X beta) - y).
+// x0 is the starting beta (pass a zero vector of length n_pred if unsure).
+// NO #[wcet]: max_iter/n_obs/n_pred are runtime values.
+// WCET formula: ~20 + max_iter * O(n_obs * n_pred).
+fn logreg_fit(
+    X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_pred: i64,
+    x0: ref Vec<f64>, alpha: f64, max_iter: i64
+) -> Vec<f64> {
+    let beta: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n_pred {
+        push(mut ref beta, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let p: Vec<f64> = logreg_predict_proba(X_flat, ref beta, n_obs, n_pred);
+        let grad: Vec<f64> = vec();
+        let j: i64 = 0;
+        while j < n_pred {
+            let g: f64 = 0.0;
+            let i: i64 = 0;
+            while i < n_obs {
+                g = g + X_flat[i * n_pred + j] * (p[i] - y[i]);
+                i = i + 1;
+            }
+            push(mut ref grad, g / (n_obs as f64));
+            j = j + 1;
+        }
+        let k: i64 = 0;
+        while k < n_pred {
+            set(mut ref beta, k, beta[k] - alpha * grad[k]);
+            k = k + 1;
+        }
+        iter = iter + 1;
+    }
+    return beta;
+}
