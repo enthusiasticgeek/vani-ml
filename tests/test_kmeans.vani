@@ -1,0 +1,64 @@
+intent "vani-ml k-means: separates two well-separated 2D clusters";
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // Cluster A near (0.5, 0.5), cluster B near (10.5, 10.5) -- far apart
+    // relative to each cluster's own spread, so k=2 should separate them
+    // cleanly regardless of random init.
+    let X: Vec<f64> = vec(
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+        1.0, 1.0,
+        10.0, 10.0,
+        11.0, 10.0,
+        10.0, 11.0,
+        11.0, 11.0
+    );
+    let n_obs: i64 = 8;
+    let n_dim: i64 = 2;
+    let k: i64 = 2;
+
+    let result: KMeansResult = kmeans_fit(ref X, n_obs, n_dim, k, 50, 42);
+
+    // Every point in cluster A got the same label, every point in
+    // cluster B got the same (different) label.
+    let label_a: i64 = result.assignments[0];
+    let label_b: i64 = result.assignments[4];
+    assert label_a != label_b;
+    let i: i64 = 0;
+    while i < 4 {
+        assert result.assignments[i] == label_a;
+        assert result.assignments[i + 4] == label_b;
+        i = i + 1;
+    }
+
+    // Centroid for cluster A's label is near (0.5, 0.5).
+    let ca_x: f64 = result.centroids[label_a * n_dim];
+    let ca_y: f64 = result.centroids[label_a * n_dim + 1];
+    assert abs(ca_x - 0.5) < 1.0e-6;
+    assert abs(ca_y - 0.5) < 1.0e-6;
+
+    // Centroid for cluster B's label is near (10.5, 10.5).
+    let cb_x: f64 = result.centroids[label_b * n_dim];
+    let cb_y: f64 = result.centroids[label_b * n_dim + 1];
+    assert abs(cb_x - 10.5) < 1.0e-6;
+    assert abs(cb_y - 10.5) < 1.0e-6;
+
+    // Inertia should be small: each point is 0.5 away (in each axis)
+    // from its centroid, sq-dist 0.5 per point, 8 points -> 4.0 total.
+    let inertia: f64 = kmeans_inertia(ref X, ref result.assignments, ref result.centroids, n_obs, n_dim);
+    assert abs(inertia - 4.0) < 1.0e-6;
+
+    // Predicting on the same data reproduces the same assignments.
+    let preds: Vec<i64> = kmeans_predict(ref X, ref result.centroids, n_obs, n_dim, k);
+    let j: i64 = 0;
+    while j < n_obs {
+        assert preds[j] == result.assignments[j];
+        j = j + 1;
+    }
+
+    print "kmeans tests passed";
+    return 0;
+}

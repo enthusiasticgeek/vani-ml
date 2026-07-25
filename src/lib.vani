@@ -162,3 +162,174 @@ fn logreg_fit(
     }
     return beta;
 }
+
+// ── K-means clustering ───────────────────────────────────────────────────
+// Lloyd's algorithm. X_flat is row-major n_obs x n_dim. No existing kosh
+// package covers this -- genuinely new code, not a wrapper.
+
+struct KMeansResult {
+    assignments: Vec<i64>,
+    centroids: Vec<f64>,
+    n_iter: i64,
+}
+
+// Squared Euclidean distance (no sqrt -- unnecessary for nearest-centroid
+// comparison or centroid averaging, and avoids the cost everywhere it's
+// called in a hot loop).
+fn _kmeans_sqdist(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, c: i64, n_dim: i64) -> f64 {
+    let s: f64 = 0.0;
+    let d: i64 = 0;
+    while d < n_dim {
+        let diff: f64 = X_flat[row * n_dim + d] - centroids[c * n_dim + d];
+        s = s + diff * diff;
+        d = d + 1;
+    }
+    return s;
+}
+
+fn _kmeans_nearest(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, k: i64, n_dim: i64) -> i64 {
+    let best: i64 = 0;
+    let best_d: f64 = _kmeans_sqdist(X_flat, row, centroids, 0, n_dim);
+    let c: i64 = 1;
+    while c < k {
+        let d: f64 = _kmeans_sqdist(X_flat, row, centroids, c, n_dim);
+        if d < best_d {
+            best_d = d;
+            best = c;
+        }
+        c = c + 1;
+    }
+    return best;
+}
+
+fn _kmeans_i64_contains(xs: ref Vec<i64>, val: i64) -> bool {
+    let n: i64 = len(xs) as i64;
+    let i: i64 = 0;
+    while i < n {
+        if xs[i] == val { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Fits k clusters via Lloyd's algorithm (random-point init, not k-means++
+// -- v0.1.0 keeps init simple; revisit if convergence quality on real
+// data ever demands it). `seed` makes centroid init deterministic (same
+// seed + same data -> same result), matching the compiler's own
+// seed_rng/rand_in_range convention. Empty clusters keep their previous
+// centroid rather than reinitializing (a documented, common convention;
+// avoids a division by zero). Stops early if assignments stop changing.
+// NO #[wcet]: max_iter/n_obs/k/n_dim are runtime values, and the initial
+// centroid-selection loop retries on duplicate draws (unbounded in the
+// worst case, though vanishingly unlikely to loop more than a handful of
+// times in practice for k << n_obs).
+// WCET formula: ~40 + max_iter * O(n_obs * k * n_dim).
+fn kmeans_fit(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64, max_iter: i64, seed: i64) -> KMeansResult {
+    let _seeded: i64 = seed_rng(seed as u64);
+
+    let chosen: Vec<i64> = vec();
+    while len(ref chosen) as i64 < k {
+        let r: i64 = rand_in_range(0, n_obs);
+        if !_kmeans_i64_contains(ref chosen, r) {
+            push(mut ref chosen, r);
+        }
+    }
+    let centroids: Vec<f64> = vec();
+    let ci: i64 = 0;
+    while ci < k {
+        let row: i64 = chosen[ci];
+        let d: i64 = 0;
+        while d < n_dim {
+            push(mut ref centroids, X_flat[row * n_dim + d]);
+            d = d + 1;
+        }
+        ci = ci + 1;
+    }
+
+    let assignments: Vec<i64> = vec();
+    let ai: i64 = 0;
+    while ai < n_obs {
+        push(mut ref assignments, 0);
+        ai = ai + 1;
+    }
+
+    let iter: i64 = 0;
+    let changed: bool = true;
+    while iter < max_iter && changed {
+        changed = false;
+        let new_assignments: Vec<i64> = vec();
+        let i: i64 = 0;
+        while i < n_obs {
+            let nearest: i64 = _kmeans_nearest(X_flat, i, ref centroids, k, n_dim);
+            push(mut ref new_assignments, nearest);
+            if iter == 0 || nearest != assignments[i] {
+                changed = true;
+            }
+            i = i + 1;
+        }
+        assignments = new_assignments;
+
+        let sums: Vec<f64> = vec();
+        let si: i64 = 0;
+        while si < k * n_dim {
+            push(mut ref sums, 0.0);
+            si = si + 1;
+        }
+        let counts: Vec<i64> = vec();
+        let cti: i64 = 0;
+        while cti < k {
+            push(mut ref counts, 0);
+            cti = cti + 1;
+        }
+        let j: i64 = 0;
+        while j < n_obs {
+            let c: i64 = assignments[j];
+            let d2: i64 = 0;
+            while d2 < n_dim {
+                set(mut ref sums, c * n_dim + d2, sums[c * n_dim + d2] + X_flat[j * n_dim + d2]);
+                d2 = d2 + 1;
+            }
+            set(mut ref counts, c, counts[c] + 1);
+            j = j + 1;
+        }
+        let c2: i64 = 0;
+        while c2 < k {
+            if counts[c2] > 0 {
+                let d3: i64 = 0;
+                while d3 < n_dim {
+                    set(mut ref centroids, c2 * n_dim + d3, sums[c2 * n_dim + d3] / (counts[c2] as f64));
+                    d3 = d3 + 1;
+                }
+            }
+            c2 = c2 + 1;
+        }
+        iter = iter + 1;
+    }
+
+    return KMeansResult { assignments: assignments, centroids: centroids, n_iter: iter };
+}
+
+// Assigns each row of X_flat to the nearest of an already-fit set of
+// centroids (e.g. on new/held-out data).
+fn kmeans_predict(X_flat: ref Vec<f64>, centroids: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64) -> Vec<i64> {
+    let out: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        push(mut ref out, _kmeans_nearest(X_flat, i, centroids, k, n_dim));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Inertia (within-cluster sum of squared distances to the assigned
+// centroid) -- the standard k-means objective value, useful for
+// comparing different k or different random inits.
+fn kmeans_inertia(X_flat: ref Vec<f64>, assignments: ref Vec<i64>, centroids: ref Vec<f64>, n_obs: i64, n_dim: i64) -> f64 {
+    let total: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n_obs {
+        total = total + _kmeans_sqdist(X_flat, i, centroids, assignments[i], n_dim);
+        i = i + 1;
+    }
+    return total;
+}
