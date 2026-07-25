@@ -333,3 +333,137 @@ fn kmeans_inertia(X_flat: ref Vec<f64>, assignments: ref Vec<i64>, centroids: re
     }
     return total;
 }
+
+// ── Train/test split ─────────────────────────────────────────────────────
+
+struct TrainTestSplit {
+    X_train: Vec<f64>,
+    y_train: Vec<f64>,
+    X_test: Vec<f64>,
+    y_test: Vec<f64>,
+    n_train: i64,
+    n_test: i64,
+}
+
+// Fisher-Yates shuffle of row indices, then splits at the test_frac
+// boundary (n_test = truncate(n_obs * test_frac)). `seed` makes the
+// split reproducible -- same seed + same data -> same split.
+// NO #[wcet]: n_obs/n_dim are runtime values.
+// WCET formula: ~30 + n_obs * (1 + n_dim) * ~5 cycles.
+fn train_test_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i64, test_frac: f64, seed: i64) -> TrainTestSplit {
+    let _seeded: i64 = seed_rng(seed as u64);
+    let idx: Vec<i64> = vec();
+    let i0: i64 = 0;
+    while i0 < n_obs {
+        push(mut ref idx, i0);
+        i0 = i0 + 1;
+    }
+    let p: i64 = n_obs - 1;
+    while p > 0 {
+        let r: i64 = rand_in_range(0, p + 1);
+        vec_swap(mut ref idx, p, r);
+        p = p - 1;
+    }
+
+    let n_test: i64 = (test_frac * (n_obs as f64)) as i64;
+    let n_train: i64 = n_obs - n_test;
+
+    let X_train: Vec<f64> = vec();
+    let y_train: Vec<f64> = vec();
+    let X_test: Vec<f64> = vec();
+    let y_test: Vec<f64> = vec();
+
+    let j: i64 = 0;
+    while j < n_obs {
+        let row: i64 = idx[j];
+        let d: i64 = 0;
+        if j < n_train {
+            while d < n_dim {
+                push(mut ref X_train, X_flat[row * n_dim + d]);
+                d = d + 1;
+            }
+            push(mut ref y_train, y[row]);
+        } else {
+            while d < n_dim {
+                push(mut ref X_test, X_flat[row * n_dim + d]);
+                d = d + 1;
+            }
+            push(mut ref y_test, y[row]);
+        }
+        j = j + 1;
+    }
+
+    return TrainTestSplit {
+        X_train: X_train, y_train: y_train,
+        X_test: X_test, y_test: y_test,
+        n_train: n_train, n_test: n_test,
+    };
+}
+
+// ── Core metrics ─────────────────────────────────────────────────────────
+// Binary-classification metrics assume labels in {0.0, 1.0}.
+
+fn mse(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
+    let n: i64 = len(y_true) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = y_true[i] - y_pred[i];
+        s = s + d * d;
+        i = i + 1;
+    }
+    return s / (n as f64);
+}
+
+fn accuracy(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
+    let n: i64 = len(y_true) as i64;
+    let correct: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        if y_true[i] == y_pred[i] { correct = correct + 1; }
+        i = i + 1;
+    }
+    return (correct as f64) / (n as f64);
+}
+
+// TP / (TP + FP). Returns 0.0 if no positive predictions were made
+// (avoids a division by zero; a defensible convention -- scikit-learn
+// does the same with a warning).
+fn precision(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
+    let n: i64 = len(y_true) as i64;
+    let tp: i64 = 0;
+    let fp: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        if y_pred[i] == 1.0 {
+            if y_true[i] == 1.0 { tp = tp + 1; } else { fp = fp + 1; }
+        }
+        i = i + 1;
+    }
+    if tp + fp == 0 { return 0.0; }
+    return (tp as f64) / ((tp + fp) as f64);
+}
+
+// TP / (TP + FN). Returns 0.0 if there are no actual positives.
+fn recall(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
+    let n: i64 = len(y_true) as i64;
+    let tp: i64 = 0;
+    let fneg: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        if y_true[i] == 1.0 {
+            if y_pred[i] == 1.0 { tp = tp + 1; } else { fneg = fneg + 1; }
+        }
+        i = i + 1;
+    }
+    if tp + fneg == 0 { return 0.0; }
+    return (tp as f64) / ((tp + fneg) as f64);
+}
+
+// Harmonic mean of precision and recall. Returns 0.0 if both are 0.
+fn f1_score(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
+    let p: f64 = precision(y_true, y_pred);
+    let r: f64 = recall(y_true, y_pred);
+    if p + r < 1.0e-15 { return 0.0; }
+    return 2.0 * p * r / (p + r);
+}

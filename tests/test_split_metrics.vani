@@ -1,0 +1,47 @@
+intent "vani-ml train/test split (partition invariants) + core metrics (hand-computed)";
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // ── train/test split ────────────────────────────────────────────────
+    let X: Vec<f64> = vec(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+    let y: Vec<f64> = vec(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+    let n_obs: i64 = 10;
+    let n_dim: i64 = 1;
+
+    let split: TrainTestSplit = train_test_split(ref X, ref y, n_obs, n_dim, 0.3, 7);
+    assert split.n_train == 7;
+    assert split.n_test == 3;
+    assert split.n_train + split.n_test == n_obs;
+    assert len(ref split.X_train) as i64 == split.n_train * n_dim;
+    assert len(ref split.X_test) as i64 == split.n_test * n_dim;
+    assert len(ref split.y_train) as i64 == split.n_train;
+    assert len(ref split.y_test) as i64 == split.n_test;
+
+    // Partition invariant: every original y value appears exactly once
+    // across train+test (X == y here, so this also checks X's rows).
+    let sum_train: f64 = vec_sum(ref split.y_train);
+    let sum_test: f64 = vec_sum(ref split.y_test);
+    let sum_orig: f64 = vec_sum(ref y);
+    assert abs(sum_train + sum_test - sum_orig) < 1.0e-9;
+
+    // ── metrics, hand-computed confusion matrix ─────────────────────────
+    // y_true: 1 0 1 1 0 0 1 0
+    // y_pred: 1 0 0 1 1 0 1 1
+    // TP=3 (idx 0,3,6), FP=2 (idx 4,7), FN=1 (idx 2), TN=2 (idx 1,5)
+    let yt: Vec<f64> = vec(1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0);
+    let yp: Vec<f64> = vec(1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0);
+
+    assert abs(accuracy(ref yt, ref yp) - 5.0 / 8.0) < 1.0e-9;
+    assert abs(precision(ref yt, ref yp) - 3.0 / 5.0) < 1.0e-9;
+    assert abs(recall(ref yt, ref yp) - 3.0 / 4.0) < 1.0e-9;
+    assert abs(f1_score(ref yt, ref yp) - 2.0 / 3.0) < 1.0e-9;
+
+    // mse: y_true=[1,2,3], y_pred=[1,2.5,2] -> sq errs 0, 0.25, 1.0 -> mean 1.25/3
+    let mt: Vec<f64> = vec(1.0, 2.0, 3.0);
+    let mp: Vec<f64> = vec(1.0, 2.5, 2.0);
+    assert abs(mse(ref mt, ref mp) - 1.25 / 3.0) < 1.0e-9;
+
+    print "split/metrics tests passed";
+    return 0;
+}
