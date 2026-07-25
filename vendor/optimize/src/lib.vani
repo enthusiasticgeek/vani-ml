@@ -1,0 +1,761 @@
+// vani-optimize  v0.1.0 — numerical optimization library
+//
+// IMPORTANT — do NOT reimplement vāṇी compiler builtins.
+// Already available as builtins (call directly, never redeclare here):
+//   abs sqrt exp log pow
+//
+// Depends on vani-matrix (mat_solve) for Newton's method and the quadratic
+// specialty solvers -- see [deps] in vani.toml. No `use` statement needed:
+// vanic auto-includes every [deps] entry's source before compiling.
+//
+// WCET (MAINT-1, added 2026-07-21 -- see kosh-index/ROADMAP.md):
+// rosenbrock_fn/rosenbrock_grad are the only genuinely O(1) functions
+// here (fixed-dimension 2D test functions, real vanic check-exact
+// #[wcet(cycles=N)]) -- sphere_fn/sphere_grad look similar but loop over
+// the caller-supplied dimension n, so they don't qualify. Every other
+// function loops over n and/or an iteration-count parameter
+// (max_iter/max_ls_iter) -- documented with a WCET formula comment
+// instead.
+
+// ── Test objective functions ─────────────────────────────────────────────────
+// Standard benchmark functions from the optimization literature. Useful for
+// sanity-checking any optimizer (including your own) against known minima.
+
+// Sphere function: sum(x_i^2). Convex, global minimum 0 at the origin.
+// WCET = 20 + n * ~10 cycles.
+#[bounded_stack(bytes = 88)]
+fn sphere_fn(x: ref Vec<f64>, n: i64) -> f64 {
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + x[i] * x[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// Analytic gradient of sphere_fn: 2x. WCET = 20 + n * ~10 cycles.
+#[bounded_stack(bytes = 112)]
+fn sphere_grad(x: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, 2.0 * x[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Rosenbrock ("banana") function, 2D: f(x,y) = (1-x)^2 + 100(y-x^2)^2.
+// Nonconvex; global minimum 0 at (1,1). The classic hard test case for
+// gradient-based optimizers -- a long, narrow, curved valley.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 45)]
+fn rosenbrock_fn(x: ref Vec<f64>, n: i64) -> f64 {
+    let a: f64 = 1.0 - x[0];
+    let b: f64 = x[1] - x[0] * x[0];
+    return a * a + 100.0 * b * b;
+}
+
+// Analytic gradient of rosenbrock_fn.
+#[bounded_stack(bytes = 112)]
+#[wcet(cycles = 166)]
+fn rosenbrock_grad(x: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let dx: f64 = 0.0 - 2.0 * (1.0 - x[0]) - 400.0 * x[0] * (x[1] - x[0] * x[0]);
+    let dy: f64 = 200.0 * (x[1] - x[0] * x[0]);
+    let out: Vec<f64> = vec(dx);
+    push(mut ref out, dy);
+    return out;
+}
+
+// ── Numerical differentiation ────────────────────────────────────────────────
+
+// Central-difference gradient of f at x. Use when an analytic gradient isn't
+// available; prefer the analytic gradient when you have one (cheaper, exact).
+// NO #[wcet]: two O(n) passes plus n indirect calls to f (a runtime
+// parameter -- WCET = 20 + n * (2 indirect calls + a few ops)).
+#[bounded_stack(bytes = 192)]
+fn grad_fd(f: fn(ref Vec<f64>, i64) -> f64, x: ref Vec<f64>, n: i64, h: f64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let xp: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref xp, x[i0]);
+        i0 = i0 + 1;
+    }
+    let i: i64 = 0;
+    while i < n {
+        let orig: f64 = xp[i];
+        set(mut ref xp, i, orig + h);
+        let fplus: f64 = f(ref xp, n);
+        set(mut ref xp, i, orig - h);
+        let fminus: f64 = f(ref xp, n);
+        set(mut ref xp, i, orig);
+        push(mut ref out, (fplus - fminus) / (2.0 * h));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Central-difference Hessian of f at x (flat n×n row-major, symmetric).
+// Diagonal via the standard 3-point second-difference formula; off-diagonal
+// via the 4-point mixed-partial formula. O(n²) function evaluations.
+// NO #[wcet]: nested i/j loop over the n x n Hessian, each cell calling f
+// (a runtime parameter) up to 4 times -- WCET = 20 + O(n^2) indirect calls.
+#[bounded_stack(bytes = 264)]
+fn hessian_fd(f: fn(ref Vec<f64>, i64) -> f64, x: ref Vec<f64>, n: i64, h: f64) -> Vec<f64> {
+    let xp: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref xp, x[i0]);
+        i0 = i0 + 1;
+    }
+    let f0: f64 = f(ref xp, n);
+
+    let out: Vec<f64> = vec();
+    let k0: i64 = 0;
+    while k0 < n * n {
+        push(mut ref out, 0.0);
+        k0 = k0 + 1;
+    }
+
+    let i: i64 = 0;
+    while i < n {
+        let j: i64 = 0;
+        while j < n {
+            if i == j {
+                let orig: f64 = xp[i];
+                set(mut ref xp, i, orig + h);
+                let fp: f64 = f(ref xp, n);
+                set(mut ref xp, i, orig - h);
+                let fm: f64 = f(ref xp, n);
+                set(mut ref xp, i, orig);
+                let hii: f64 = (fp - 2.0 * f0 + fm) / (h * h);
+                set(mut ref out, i * n + j, hii);
+            } else {
+                if j > i {
+                    let oi: f64 = xp[i];
+                    let oj: f64 = xp[j];
+                    set(mut ref xp, i, oi + h);
+                    set(mut ref xp, j, oj + h);
+                    let fpp: f64 = f(ref xp, n);
+                    set(mut ref xp, j, oj - h);
+                    let fpm: f64 = f(ref xp, n);
+                    set(mut ref xp, i, oi - h);
+                    let fmm: f64 = f(ref xp, n);
+                    set(mut ref xp, j, oj + h);
+                    let fmp: f64 = f(ref xp, n);
+                    set(mut ref xp, i, oi);
+                    set(mut ref xp, j, oj);
+                    let hij: f64 = (fpp - fpm - fmp + fmm) / (4.0 * h * h);
+                    set(mut ref out, i * n + j, hij);
+                    set(mut ref out, j * n + i, hij);
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// WCET = 20 + n * ~10 cycles.
+#[bounded_stack(bytes = 88)]
+fn _vec_norm2(x: ref Vec<f64>, n: i64) -> f64 {
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + x[i] * x[i];
+        i = i + 1;
+    }
+    return sqrt(s);
+}
+
+// WCET = 20 + n * ~10 cycles.
+#[bounded_stack(bytes = 96)]
+fn _dot_n(x: ref Vec<f64>, y: ref Vec<f64>, n: i64) -> f64 {
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + x[i] * y[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// WCET = 20 + n^2 * ~5 cycles.
+#[bounded_stack(bytes = 152)]
+fn _mat_vec_mul_n(A: ref Vec<f64>, x: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let s: f64 = 0.0;
+        let j: i64 = 0;
+        while j < n {
+            s = s + A[i * n + j] * x[j];
+            j = j + 1;
+        }
+        push(mut ref out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── Unconstrained gradient-based optimization ────────────────────────────────
+
+// Gradient descent with a fixed step size. Simple and robust when alpha is
+// tuned correctly, but can diverge if alpha is too large for the objective's
+// curvature. Prefer gradient_descent_backtracking when in doubt. WCET =
+// 20 + n (copy) + max_iter * (grad_f indirect call + O(n) update + a
+// _vec_norm2 call) -- O(max_iter * n).
+#[bounded_stack(bytes = 296)]
+fn gradient_descent_fixed(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    grad_f: fn(ref Vec<f64>, i64) -> Vec<f64>,
+    x0: ref Vec<f64>, n: i64, alpha: f64, max_iter: i64, tol: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let g: Vec<f64> = grad_f(ref x, n);
+        if _vec_norm2(ref g, n) < tol { break; }
+        let i: i64 = 0;
+        while i < n {
+            set(mut ref x, i, x[i] - alpha * g[i]);
+            i = i + 1;
+        }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// Backtracking line search along `direction` from `x`, satisfying the Armijo
+// (sufficient decrease) condition: f(x+alpha*d) <= f(x) + c1*alpha*(grad·d).
+// Typical values: c1=1e-4, rho=0.5, alpha0=1.0. WCET = 20 +
+// max_ls_iter * (O(n) trial point + an indirect call to f) --
+// O(max_ls_iter * n).
+#[bounded_stack(bytes = 312)]
+fn armijo_line_search(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    x: ref Vec<f64>, n: i64,
+    direction: ref Vec<f64>, grad: ref Vec<f64>,
+    alpha0: f64, c1: f64, rho: f64, max_ls_iter: i64
+) -> f64 {
+    let fx: f64 = f(x, n);
+    let slope: f64 = _dot_n(grad, direction, n);
+    let alpha: f64 = alpha0;
+    let iter: i64 = 0;
+    while iter < max_ls_iter {
+        let xt: Vec<f64> = vec();
+        let i: i64 = 0;
+        while i < n {
+            push(mut ref xt, x[i] + alpha * direction[i]);
+            i = i + 1;
+        }
+        let ft: f64 = f(ref xt, n);
+        if ft <= fx + c1 * alpha * slope { return alpha; }
+        alpha = alpha * rho;
+        iter = iter + 1;
+    }
+    return alpha;
+}
+
+// Gradient descent with Armijo backtracking line search (adaptive step size).
+// Much more robust than gradient_descent_fixed -- handles ill-conditioned and
+// nonconvex objectives (validated against the Rosenbrock function). WCET
+// = 20 + n (copy) + max_iter * (grad_f call + O(n) work + call
+// armijo_line_search's own O(max_ls_iter * n)) --
+// O(max_iter * max_ls_iter * n).
+#[bounded_stack(bytes = 560)]
+fn gradient_descent_backtracking(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    grad_f: fn(ref Vec<f64>, i64) -> Vec<f64>,
+    x0: ref Vec<f64>, n: i64, max_iter: i64, tol: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let g: Vec<f64> = grad_f(ref x, n);
+        if _vec_norm2(ref g, n) < tol { break; }
+        let d: Vec<f64> = vec();
+        let j: i64 = 0;
+        while j < n {
+            push(mut ref d, 0.0 - g[j]);
+            j = j + 1;
+        }
+        let alpha: f64 = armijo_line_search(f, ref x, n, ref d, ref g, 1.0, 1.0e-4, 0.5, 50);
+        let k: i64 = 0;
+        while k < n {
+            set(mut ref x, k, x[k] + alpha * d[k]);
+            k = k + 1;
+        }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// Newton's method in N dimensions, given analytic gradient and Hessian
+// callbacks. Quadratic convergence near the optimum -- validated to converge
+// to machine precision on Rosenbrock in a handful of iterations from a
+// standard hard starting point. No line search or Hessian-modification
+// safeguard (v0.1.0): works well near a local min with a well-conditioned
+// Hessian; can fail far from a solution or with an indefinite Hessian.
+// WCET = 20 + n (copy) + max_iter * (grad_f + hess_f indirect calls +
+// mat_solve's O(n^3) Gaussian elimination) -- O(max_iter * n^3).
+#[bounded_stack(bytes = 784)]
+fn newton_nd(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    grad_f: fn(ref Vec<f64>, i64) -> Vec<f64>,
+    hess_f: fn(ref Vec<f64>, i64) -> Vec<f64>,
+    x0: ref Vec<f64>, n: i64, max_iter: i64, tol: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let g: Vec<f64> = grad_f(ref x, n);
+        if _vec_norm2(ref g, n) < tol { break; }
+        let h: Vec<f64> = hess_f(ref x, n);
+        let neg_g: Vec<f64> = vec();
+        let j: i64 = 0;
+        while j < n {
+            push(mut ref neg_g, 0.0 - g[j]);
+            j = j + 1;
+        }
+        let step: Vec<f64> = matrix::mat_solve(ref h, ref neg_g, n);
+        let k: i64 = 0;
+        while k < n {
+            set(mut ref x, k, x[k] + step[k]);
+            k = k + 1;
+        }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// Newton's method using finite-difference gradient and Hessian -- fully
+// derivative-free, at the cost of O(n²) extra function evaluations per
+// iteration versus the analytic-callback version. WCET = 20 + n (copy) +
+// max_iter * (grad_fd's O(n) + hessian_fd's O(n^2) indirect calls +
+// mat_solve's O(n^3)) -- O(max_iter * n^3), same order as newton_nd but
+// with a bigger constant from the finite-difference evaluations.
+#[bounded_stack(bytes = 776)]
+fn newton_nd_fd(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    x0: ref Vec<f64>, n: i64, max_iter: i64, tol: f64, h: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let g: Vec<f64> = grad_fd(f, ref x, n, h);
+        if _vec_norm2(ref g, n) < tol { break; }
+        let hess: Vec<f64> = hessian_fd(f, ref x, n, h);
+        let neg_g: Vec<f64> = vec();
+        let j: i64 = 0;
+        while j < n {
+            push(mut ref neg_g, 0.0 - g[j]);
+            j = j + 1;
+        }
+        let step: Vec<f64> = matrix::mat_solve(ref hess, ref neg_g, n);
+        let k: i64 = 0;
+        while k < n {
+            set(mut ref x, k, x[k] + step[k]);
+            k = k + 1;
+        }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// Coordinate descent: repeatedly sweep each axis, moving along a
+// finite-difference estimate of that coordinate's partial derivative.
+// Derivative-free and simple; converges slower than gradient methods but is
+// a robust baseline with no line search to tune. WCET = 20 + n (copy) +
+// max_iter * n * (2 indirect calls to f) -- O(max_iter * n).
+#[bounded_stack(bytes = 240)]
+fn coordinate_descent(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    x0: ref Vec<f64>, n: i64, alpha: f64, max_iter: i64, tol: f64, h: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let max_move: f64 = 0.0;
+        let c: i64 = 0;
+        while c < n {
+            let orig: f64 = x[c];
+            set(mut ref x, c, orig + h);
+            let fplus: f64 = f(ref x, n);
+            set(mut ref x, c, orig - h);
+            let fminus: f64 = f(ref x, n);
+            set(mut ref x, c, orig);
+            let deriv: f64 = (fplus - fminus) / (2.0 * h);
+            let move_amt: f64 = alpha * deriv;
+            set(mut ref x, c, orig - move_amt);
+            if abs(move_amt) > max_move { max_move = abs(move_amt); }
+            c = c + 1;
+        }
+        if max_move < tol { break; }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// ── Quadratic specialty solvers ───────────────────────────────────────────────
+// For objectives of the form 0.5 x^T Q x + b^T x with SPD Q.
+
+// Closed-form minimizer: x = -Q⁻¹b (the unique stationary point of a convex
+// quadratic). Exact, no iteration. WCET = 20 + n (negate) + mat_solve's
+// O(n^3) Gaussian elimination -- O(n^3).
+#[bounded_stack(bytes = 608)]
+fn quadratic_minimize(Q: ref Vec<f64>, b: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let neg_b: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref neg_b, 0.0 - b[i]);
+        i = i + 1;
+    }
+    return matrix::mat_solve(Q, ref neg_b, n);
+}
+
+// Steepest descent specialized to a quadratic objective: gradient g = Qx+b,
+// exact optimal step alpha* = (g·g)/(g·Qg) each iteration (no line search
+// needed -- closed form for a quadratic). Converges in 1 step when Q is a
+// multiple of the identity; slower for ill-conditioned Q. WCET = 20 + n
+// (copy) + max_iter * (2 * _mat_vec_mul_n's O(n^2) + O(n) work) --
+// O(max_iter * n^2).
+#[bounded_stack(bytes = 424)]
+fn steepest_descent_quadratic(Q: ref Vec<f64>, b: ref Vec<f64>, x0: ref Vec<f64>, n: i64, max_iter: i64, tol: f64) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let qx: Vec<f64> = _mat_vec_mul_n(Q, ref x, n);
+        let g: Vec<f64> = vec();
+        let j: i64 = 0;
+        while j < n {
+            push(mut ref g, qx[j] + b[j]);
+            j = j + 1;
+        }
+        if _vec_norm2(ref g, n) < tol { break; }
+        let qg: Vec<f64> = _mat_vec_mul_n(Q, ref g, n);
+        let alpha: f64 = _dot_n(ref g, ref g, n) / _dot_n(ref g, ref qg, n);
+        let k: i64 = 0;
+        while k < n {
+            set(mut ref x, k, x[k] - alpha * g[k]);
+            k = k + 1;
+        }
+        iter = iter + 1;
+    }
+    return x;
+}
+
+// ── Constrained optimization (penalty method) ────────────────────────────────
+// Minimize f(x) subject to a single inequality constraint g(x) <= 0, via the
+// quadratic penalty method: minimize f(x) + mu*max(0,g(x))^2, with mu
+// increasing each outer iteration. For multiple constraints, combine them
+// into one g via e.g. g(x) = max(g_1(x), ..., g_k(x)).
+
+// Penalized objective value at x for a given penalty weight mu. WCET =
+// 20 + 2 indirect calls (f, g).
+#[bounded_stack(bytes = 104)]
+#[wcet(cycles = 52)]
+fn penalty_value(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    g: fn(ref Vec<f64>, i64) -> f64,
+    x: ref Vec<f64>, n: i64, mu: f64
+) -> f64 {
+    let gv: f64 = g(x, n);
+    let viol: f64 = 0.0;
+    if gv > 0.0 { viol = gv; }
+    return f(x, n) + mu * viol * viol;
+}
+
+// Central-difference gradient of the penalized objective at x. WCET =
+// 20 + n * (2 calls to penalty_value, each 2 indirect calls) --
+// O(n) indirect calls.
+#[bounded_stack(bytes = 312)]
+fn penalty_grad_fd(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    g: fn(ref Vec<f64>, i64) -> f64,
+    x: ref Vec<f64>, n: i64, mu: f64, h: f64
+) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let xp: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref xp, x[i0]);
+        i0 = i0 + 1;
+    }
+    let i: i64 = 0;
+    while i < n {
+        let orig: f64 = xp[i];
+        set(mut ref xp, i, orig + h);
+        let fplus: f64 = penalty_value(f, g, ref xp, n, mu);
+        set(mut ref xp, i, orig - h);
+        let fminus: f64 = penalty_value(f, g, ref xp, n, mu);
+        set(mut ref xp, i, orig);
+        push(mut ref out, (fplus - fminus) / (2.0 * h));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Backtracking Armijo line search specialized to the penalized objective
+// (inlined rather than reusing armijo_line_search generically, since vāṇी
+// has no closures to bake `mu` into a plain function-pointer callback).
+// IMPORTANT: a fixed step size here reliably diverges once mu grows large
+// (the penalized gradient's magnitude scales with mu) -- always use this
+// line search rather than a fixed step in the penalty method's inner loop.
+// WCET = 20 + max_ls_iter * (O(n) trial point + penalty_value's 2
+// indirect calls) -- O(max_ls_iter * n).
+#[bounded_stack(bytes = 336)]
+fn penalty_line_search(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    g: fn(ref Vec<f64>, i64) -> f64,
+    x: ref Vec<f64>, n: i64, mu: f64,
+    direction: ref Vec<f64>, grad: ref Vec<f64>,
+    alpha0: f64, c1: f64, rho: f64, max_ls_iter: i64
+) -> f64 {
+    let fx: f64 = penalty_value(f, g, x, n, mu);
+    let slope: f64 = _dot_n(grad, direction, n);
+    let alpha: f64 = alpha0;
+    let iter: i64 = 0;
+    while iter < max_ls_iter {
+        let xt: Vec<f64> = vec();
+        let i: i64 = 0;
+        while i < n {
+            push(mut ref xt, x[i] + alpha * direction[i]);
+            i = i + 1;
+        }
+        let ft: f64 = penalty_value(f, g, ref xt, n, mu);
+        if ft <= fx + c1 * alpha * slope { return alpha; }
+        alpha = alpha * rho;
+        iter = iter + 1;
+    }
+    return alpha;
+}
+
+// Penalty method: outer loop increases mu geometrically (by mu_scale each
+// round, over outer_iters rounds); inner loop is gradient descent with
+// backtracking line search (never a fixed step -- see penalty_line_search's
+// doc comment) on the penalized objective, for up to inner_iters steps or
+// until convergence. Validated against a textbook equality-constrained
+// quadratic (minimize x²+y² s.t. x+y>=1 -> exact solution (0.5,0.5)).
+// WCET = 20 + n (copy) + outer_iters * inner_iters * (penalty_grad_fd's
+// O(n) indirect calls + penalty_line_search's O(max_ls_iter * n)) --
+// O(outer_iters * inner_iters * max_ls_iter * n).
+#[bounded_stack(bytes = 640)]
+fn penalty_method_minimize(
+    f: fn(ref Vec<f64>, i64) -> f64,
+    g: fn(ref Vec<f64>, i64) -> f64,
+    x0: ref Vec<f64>, n: i64,
+    mu0: f64, mu_scale: f64, outer_iters: i64, inner_iters: i64, h: f64
+) -> Vec<f64> {
+    let x: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < n {
+        push(mut ref x, x0[i0]);
+        i0 = i0 + 1;
+    }
+    let mu: f64 = mu0;
+    let outer: i64 = 0;
+    while outer < outer_iters {
+        let inner: i64 = 0;
+        while inner < inner_iters {
+            let g_vec: Vec<f64> = penalty_grad_fd(f, g, ref x, n, mu, h);
+            if _vec_norm2(ref g_vec, n) < 1.0e-12 {
+                inner = inner_iters;
+            } else {
+                let d: Vec<f64> = vec();
+                let j: i64 = 0;
+                while j < n {
+                    push(mut ref d, 0.0 - g_vec[j]);
+                    j = j + 1;
+                }
+                let alpha: f64 = penalty_line_search(f, g, ref x, n, mu, ref d, ref g_vec, 1.0, 1.0e-4, 0.5, 50);
+                let k: i64 = 0;
+                while k < n {
+                    set(mut ref x, k, x[k] + alpha * d[k]);
+                    k = k + 1;
+                }
+                inner = inner + 1;
+            }
+        }
+        mu = mu * mu_scale;
+        outer = outer + 1;
+    }
+    return x;
+}
+
+// ── Linear programming (simplex method) ──────────────────────────────────────
+
+// Tableau simplex: maximize c^T x subject to A x <= b, x >= 0, assuming
+// b >= 0 (so x=0 is an initial basic feasible solution -- no Phase I method;
+// a genuinely infeasible-at-the-origin problem is out of scope for v0.1.0).
+// c: length n_vars. A: flat row-major n_constraints × n_vars. b: length
+// n_constraints. Returns the optimal x (length n_vars). Validated against
+// two independent textbook LP examples (including the classic Wyndor Glass
+// Co. problem). WCET: the pivot loop's iteration cap (200) is a hardcoded
+// internal constant, not a parameter, but each iteration still does
+// O(height*width) work over the tableau -- O(200 * m * n), i.e. O(m*n)
+// with a fixed constant factor. Still UNBOUNDED to the checker (`while
+// iter < max_iter` isn't a `for` loop with const bounds even though
+// max_iter itself is a literal 200 here).
+#[bounded_stack(bytes = 521)]
+fn simplex_solve(c: ref Vec<f64>, A: ref Vec<f64>, b: ref Vec<f64>, n_vars: i64, n_constraints: i64) -> Vec<f64> {
+    let m: i64 = n_constraints;
+    let n: i64 = n_vars;
+    let width: i64 = n + m + 1;
+    let height: i64 = m + 1;
+
+    let T: Vec<f64> = vec();
+    let k0: i64 = 0;
+    while k0 < height * width {
+        push(mut ref T, 0.0);
+        k0 = k0 + 1;
+    }
+
+    let j0: i64 = 0;
+    while j0 < n {
+        set(mut ref T, j0, 0.0 - c[j0]);
+        j0 = j0 + 1;
+    }
+
+    let i: i64 = 0;
+    while i < m {
+        let row: i64 = i + 1;
+        let j: i64 = 0;
+        while j < n {
+            set(mut ref T, row * width + j, A[i * n + j]);
+            j = j + 1;
+        }
+        set(mut ref T, row * width + (n + i), 1.0);
+        set(mut ref T, row * width + (width - 1), b[i]);
+        i = i + 1;
+    }
+
+    let max_iter: i64 = 200;
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let q: i64 = 0 - 1;
+        let best: f64 = 0.0 - 1.0e-9;
+        let jj: i64 = 0;
+        while jj < n + m {
+            if T[jj] < best {
+                best = T[jj];
+                q = jj;
+            }
+            jj = jj + 1;
+        }
+        if q < 0 {
+            iter = max_iter;
+        } else {
+            let p: i64 = 0 - 1;
+            let best_ratio: f64 = 0.0;
+            let ii: i64 = 1;
+            while ii < height {
+                let val: f64 = T[ii * width + q];
+                if val > 1.0e-12 {
+                    let ratio: f64 = T[ii * width + (width - 1)] / val;
+                    if p < 0 || ratio < best_ratio {
+                        best_ratio = ratio;
+                        p = ii;
+                    }
+                }
+                ii = ii + 1;
+            }
+            if p < 0 {
+                // Unbounded LP; v0.1.0 has no dedicated signal for this case
+                // and simply stops iterating.
+                iter = max_iter;
+            } else {
+                let pivot_val: f64 = T[p * width + q];
+                let jc: i64 = 0;
+                while jc < width {
+                    set(mut ref T, p * width + jc, T[p * width + jc] / pivot_val);
+                    jc = jc + 1;
+                }
+                let r: i64 = 0;
+                while r < height {
+                    if r != p {
+                        let factor: f64 = T[r * width + q];
+                        if abs(factor) > 1.0e-15 {
+                            let jc2: i64 = 0;
+                            while jc2 < width {
+                                set(mut ref T, r * width + jc2, T[r * width + jc2] - factor * T[p * width + jc2]);
+                                jc2 = jc2 + 1;
+                            }
+                        }
+                    }
+                    r = r + 1;
+                }
+                iter = iter + 1;
+            }
+        }
+    }
+
+    // A decision-variable column j is "basic" (nonzero optimal value) iff
+    // exactly one row has a 1 there and every other row (including the
+    // objective row) has 0; its value is that row's RHS entry.
+    let x: Vec<f64> = vec();
+    let vj: i64 = 0;
+    while vj < n {
+        let one_row: i64 = 0 - 1;
+        let ones_count: i64 = 0;
+        let is_clean: bool = true;
+        let ri: i64 = 0;
+        while ri < height {
+            let v: f64 = T[ri * width + vj];
+            if abs(v - 1.0) < 1.0e-9 {
+                ones_count = ones_count + 1;
+                one_row = ri;
+            } else {
+                if abs(v) > 1.0e-9 { is_clean = false; }
+            }
+            ri = ri + 1;
+        }
+        if ones_count == 1 && is_clean && one_row > 0 {
+            push(mut ref x, T[one_row * width + (width - 1)]);
+        } else {
+            push(mut ref x, 0.0);
+        }
+        vj = vj + 1;
+    }
+    return x;
+}
+
+// Objective value c·x for a simplex_solve result (or any candidate point).
+// WCET = 20 + n_vars * ~10 cycles.
+#[bounded_stack(bytes = 160)]
+fn simplex_value(c: ref Vec<f64>, x: ref Vec<f64>, n_vars: i64) -> f64 {
+    return _dot_n(c, x, n_vars);
+}

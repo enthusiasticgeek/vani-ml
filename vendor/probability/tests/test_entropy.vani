@@ -1,0 +1,105 @@
+use "../src/lib.vani";
+
+fn make_uniform2() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.5);
+    push(mut ref v, 0.5);
+    return v;
+}
+
+fn make_uniform4() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.25);
+    push(mut ref v, 0.25);
+    push(mut ref v, 0.25);
+    push(mut ref v, 0.25);
+    return v;
+}
+
+// shannon_entropy([0.5, 0.5]) = 1.0 bit
+#[test]
+fn test_shannon_uniform2() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    assert abs(shannon_entropy(ref ps) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+// shannon_entropy([0.25,0.25,0.25,0.25]) = 2.0 bits
+#[test]
+fn test_shannon_uniform4() -> i64 {
+    let ps: Vec<f64> = make_uniform4();
+    assert abs(shannon_entropy(ref ps) - 2.0) < 1.0e-12;
+    return 0;
+}
+
+// shannon_entropy of certain event = 0
+#[test]
+fn test_shannon_certain() -> i64 {
+    let ps: Vec<f64> = vec(1.0);
+    push(mut ref ps, 0.0);
+    assert abs(shannon_entropy(ref ps)) < 1.0e-12;
+    return 0;
+}
+
+// kl_divergence(p, p) = 0 for any p
+#[test]
+fn test_kl_self() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    let qs: Vec<f64> = make_uniform2();
+    assert abs(kl_divergence(ref ps, ref qs)) < 1.0e-12;
+    return 0;
+}
+
+// kl_divergence([0.5,0.5] || [0.25,0.75]):
+// = 0.5*log(0.5/0.25) + 0.5*log(0.5/0.75)
+// = 0.5*log(2) + 0.5*log(2/3)
+// = 0.5*0.6931 + 0.5*(-0.4055) ≈ 0.1438
+#[test]
+fn test_kl_divergence() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    let qs: Vec<f64> = vec(0.25);
+    push(mut ref qs, 0.75);
+    let expected: f64 = 0.5 * log(2.0) + 0.5 * log(2.0 / 3.0);
+    assert abs(kl_divergence(ref ps, ref qs) - expected) < 1.0e-10;
+    return 0;
+}
+
+// cross_entropy(p, p) = shannon entropy in nats: for [0.5,0.5] = log(2)
+#[test]
+fn test_cross_entropy_self() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    let qs: Vec<f64> = make_uniform2();
+    assert abs(cross_entropy(ref ps, ref qs) - log(2.0)) < 1.0e-12;
+    return 0;
+}
+
+// cross_entropy >= kl_divergence + shannon(nats): H(p,q) = H(p) + D_KL(p||q)
+// For ps=[0.5,0.5], qs=[0.25,0.75]:
+// H(p) in nats = log(2); D_KL ≈ 0.1438; H(p,q) should = H(p)+D_KL
+#[test]
+fn test_cross_entropy_decomposition() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    let qs: Vec<f64> = vec(0.25);
+    push(mut ref qs, 0.75);
+    let hp_nats: f64 = log(2.0);
+    let kl: f64 = kl_divergence(ref ps, ref qs);
+    let hpq: f64 = cross_entropy(ref ps, ref qs);
+    assert abs(hpq - (hp_nats + kl)) < 1.0e-10;
+    return 0;
+}
+
+// renyi_entropy([0.5,0.5], alpha=2): log(0.5) / (1-2) = log(0.5)/(-1) = log(2) ≈ 0.6931
+#[test]
+fn test_renyi_alpha2() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    assert abs(renyi_entropy(ref ps, 2.0) - log(2.0)) < 1.0e-12;
+    return 0;
+}
+
+// renyi_entropy at alpha→1 approaches natural-log Shannon: [0.5,0.5] → log(2)
+#[test]
+fn test_renyi_alpha1_limit() -> i64 {
+    let ps: Vec<f64> = make_uniform2();
+    assert abs(renyi_entropy(ref ps, 1.0) - log(2.0)) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

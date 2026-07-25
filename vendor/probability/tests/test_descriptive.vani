@@ -1,0 +1,138 @@
+use "../src/lib.vani";
+
+fn make5() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 5.0);
+    return v;
+}
+
+fn make3() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    return v;
+}
+
+// mean([1,2,3,4,5]) = 3.0
+#[test]
+fn test_mean_basic() -> i64 {
+    let xs: Vec<f64> = make5();
+    assert abs(mean(ref xs) - 3.0) < 1.0e-12;
+    return 0;
+}
+
+// mean of single element = that element
+#[test]
+fn test_mean_single() -> i64 {
+    let xs: Vec<f64> = vec(7.5);
+    assert abs(mean(ref xs) - 7.5) < 1.0e-12;
+    return 0;
+}
+
+// variance([1,2,3,4,5]) = 2.5  (Bessel-corrected)
+#[test]
+fn test_variance_basic() -> i64 {
+    let xs: Vec<f64> = make5();
+    assert abs(variance(ref xs) - 2.5) < 1.0e-12;
+    return 0;
+}
+
+// std_dev([1,2,3,4,5]) = sqrt(2.5) ≈ 1.5811388
+#[test]
+fn test_std_dev_basic() -> i64 {
+    let xs: Vec<f64> = make5();
+    assert abs(std_dev(ref xs) - sqrt(2.5)) < 1.0e-12;
+    return 0;
+}
+
+// median of odd-length sorted list: [3,1,4,1,5,9,2] → sorted [1,1,2,3,4,5,9] → 3.0
+#[test]
+fn test_median_odd() -> i64 {
+    let xs: Vec<f64> = vec(3.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 4.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 5.0);
+    push(mut ref xs, 9.0);
+    push(mut ref xs, 2.0);
+    assert abs(median(ref xs) - 3.0) < 1.0e-12;
+    return 0;
+}
+
+// median of even-length list: [1,2,3,4] → 2.5
+#[test]
+fn test_median_even() -> i64 {
+    let xs: Vec<f64> = vec(1.0);
+    push(mut ref xs, 2.0);
+    push(mut ref xs, 3.0);
+    push(mut ref xs, 4.0);
+    assert abs(median(ref xs) - 2.5) < 1.0e-12;
+    return 0;
+}
+
+// skewness of symmetric [1,2,3,4,5] = 0.0
+#[test]
+fn test_skewness_symmetric() -> i64 {
+    let xs: Vec<f64> = make5();
+    assert abs(skewness(ref xs)) < 1.0e-10;
+    return 0;
+}
+
+// kurtosis of [1,2,3,4,5]: discrete uniform-like → ≈ -1.2
+#[test]
+fn test_kurtosis_uniform() -> i64 {
+    let xs: Vec<f64> = make5();
+    assert abs(kurtosis(ref xs) - (0.0 - 1.2)) < 1.0e-8;
+    return 0;
+}
+
+// sample_min([3,1,4,1,5]) = 1.0
+#[test]
+fn test_sample_min() -> i64 {
+    let xs: Vec<f64> = vec(3.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 4.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 5.0);
+    assert abs(sample_min(ref xs) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+// sample_max([3,1,4,1,5]) = 5.0
+#[test]
+fn test_sample_max() -> i64 {
+    let xs: Vec<f64> = vec(3.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 4.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 5.0);
+    assert abs(sample_max(ref xs) - 5.0) < 1.0e-12;
+    return 0;
+}
+
+// weighted_mean([1,2,3], [1,2,1]) = (1+4+3)/4 = 2.0
+#[test]
+fn test_weighted_mean() -> i64 {
+    let xs: Vec<f64> = make3();
+    let ws: Vec<f64> = vec(1.0);
+    push(mut ref ws, 2.0);
+    push(mut ref ws, 1.0);
+    assert abs(weighted_mean(ref xs, ref ws) - 2.0) < 1.0e-12;
+    return 0;
+}
+
+// weighted_variance([1,2,3], [1,1,1]) = variance([1,2,3]) = 1.0
+#[test]
+fn test_weighted_variance_uniform_weights() -> i64 {
+    let xs: Vec<f64> = make3();
+    let ws: Vec<f64> = vec(1.0);
+    push(mut ref ws, 1.0);
+    push(mut ref ws, 1.0);
+    assert abs(weighted_variance(ref xs, ref ws) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

@@ -1,0 +1,52 @@
+// Bayesian inference demo: a classic medical-test example.
+// Disease prevalence 1%, test sensitivity 95%, specificity 90%.
+// Given a positive test, what's the actual probability of disease?
+//
+// Run with:  vanic run examples/bayes_medical.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    print "=== Bayesian diagnosis: disease prevalence 1%, test 95% sensitive / 90% specific ===";
+
+    // Hypotheses: 0 = has disease, 1 = healthy.
+    let priors: Vec<f64> = vec(0.01);
+    push(mut ref priors, 0.99);
+
+    // P(positive test | hypothesis):
+    //   sensitivity  = P(positive | disease) = 0.95
+    //   1-specificity = P(positive | healthy) = 0.10
+    let likelihood_positive: Vec<f64> = vec(0.95);
+    push(mut ref likelihood_positive, 0.10);
+
+    let unnorm: Vec<f64> = bayes_posterior(ref priors, ref likelihood_positive);
+    let posterior: Vec<f64> = normalize_probs(ref unnorm);
+
+    print "P(disease)         =", priors[0];
+    print "P(positive|disease)=", likelihood_positive[0];
+    print "P(positive|healthy)=", likelihood_positive[1];
+    print "";
+    print "P(disease | positive test) =", posterior[0];
+    print "P(healthy | positive test) =", posterior[1];
+    print "(Even with a 95%-sensitive test, most positives are false alarms";
+    print " when the disease is this rare -- the classic base-rate result.)";
+
+    print "";
+    print "=== Same problem via law_of_total_prob + conditional_prob ===";
+    let p_ab: f64 = priors[0] * likelihood_positive[0];
+    let p_positive: f64 = law_of_total_prob(ref priors, ref likelihood_positive);
+    let p_disease_given_positive: f64 = conditional_prob(p_ab, p_positive);
+    print "P(positive test) total =", p_positive;
+    print "P(disease | positive)  =", p_disease_given_positive, "(matches above)";
+
+    print "";
+    print "=== Log-space version (avoids underflow with many features) ===";
+    let log_priors: Vec<f64> = vec(log(0.01));
+    push(mut ref log_priors, log(0.99));
+    let log_likelihoods: Vec<f64> = vec(log(0.95));
+    push(mut ref log_likelihoods, log(0.10));
+    let log_post: Vec<f64> = bayes_log_posterior(ref log_priors, ref log_likelihoods);
+    print "log unnormalised posterior: disease=", log_post[0], " healthy=", log_post[1];
+
+    return 0;
+}

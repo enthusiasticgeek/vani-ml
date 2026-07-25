@@ -1,0 +1,82 @@
+use "../src/lib.vani";
+
+// Classic chi-squared critical values (alpha=0.05, upper tail) from standard tables.
+#[test]
+fn test_chi_squared_cdf_table_df1() -> i64 {
+    // df=1, critical value 3.841 -> CDF should be ~0.95
+    assert abs(chi_squared_cdf(1.0, 3.841) - 0.95) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_chi_squared_cdf_table_df5() -> i64 {
+    // df=5, critical value 11.070 -> CDF should be ~0.95
+    assert abs(chi_squared_cdf(5.0, 11.070) - 0.95) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_chi_squared_cdf_zero() -> i64 {
+    assert abs(chi_squared_cdf(3.0, 0.0) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// Classic two-tailed 95% critical values for Student's t from standard tables.
+#[test]
+fn test_t_cdf_table_df10() -> i64 {
+    // df=10, critical value 2.228 -> CDF should be ~0.975
+    assert abs(t_cdf(10.0, 2.228) - 0.975) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_t_cdf_table_df1_cauchy() -> i64 {
+    // df=1 (Cauchy), critical value 12.706 -> CDF should be ~0.975
+    assert abs(t_cdf(1.0, 12.706) - 0.975) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_t_cdf_symmetric_about_zero() -> i64 {
+    assert abs(t_cdf(8.0, 0.0) - 0.5) < 1.0e-12;
+    assert abs((t_cdf(8.0, 1.5) + t_cdf(8.0, 0.0 - 1.5)) - 1.0) < 1.0e-9;
+    return 0;
+}
+
+// Classic F-distribution critical value (alpha=0.05, upper tail), df1=5, df2=10.
+#[test]
+fn test_f_cdf_table() -> i64 {
+    assert abs(f_cdf(5.0, 10.0, 3.33) - 0.95) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_f_cdf_zero_at_origin() -> i64 {
+    assert abs(f_cdf(4.0, 6.0, 0.0) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// gamma_cdf(shape=1, rate=lambda, x) reduces to the exponential CDF.
+#[test]
+fn test_gamma_cdf_matches_exponential() -> i64 {
+    let lambda: f64 = 2.0;
+    let x: f64 = 1.5;
+    assert abs(gamma_cdf(1.0, lambda, x) - exponential_cdf(lambda, x)) < 1.0e-9;
+    return 0;
+}
+
+// exponential_cdf_exact must match exponential_cdf exactly (it's a direct wrapper).
+#[test]
+fn test_exponential_cdf_exact_matches() -> i64 {
+    assert abs(exponential_cdf_exact(1.5, 2.0) - exponential_cdf(1.5, 2.0)) < 1.0e-15;
+    return 0;
+}
+
+// beta_cdf(2,2,0.5) = 0.5 by symmetry.
+#[test]
+fn test_beta_cdf_symmetric() -> i64 {
+    assert abs(beta_cdf(2.0, 2.0, 0.5) - 0.5) < 1.0e-9;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

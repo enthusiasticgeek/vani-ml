@@ -1,0 +1,72 @@
+// Tests for numerical differentiation and gradient-based unconstrained
+// optimization.
+// Run with:  vanic test tests/test_gradient_methods.vani
+
+use "../src/lib.vani";
+
+fn close(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-6;
+}
+
+// Second-order finite differences (hessian_fd) carry more truncation/rounding
+// error than first-order ones (grad_fd), so Hessian comparisons need a looser
+// tolerance than the 1.0e-6 used for gradients.
+fn close_fd2(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-4;
+}
+
+fn main() -> i64 {
+    // grad_fd on sphere at (3,4): analytic gradient is (6,8).
+    let x1: Vec<f64> = vec(3.0);
+    push(mut ref x1, 4.0);
+    let g1: Vec<f64> = grad_fd(sphere_fn, ref x1, 2, 1.0e-5);
+    assert close(g1[0], 6.0);
+    assert close(g1[1], 8.0);
+
+    // grad_fd cross-checked against the analytic Rosenbrock gradient.
+    let x2: Vec<f64> = vec(0.0);
+    push(mut ref x2, 0.0);
+    let g2: Vec<f64> = grad_fd(rosenbrock_fn, ref x2, 2, 1.0e-5);
+    let g2a: Vec<f64> = rosenbrock_grad(ref x2, 2);
+    assert close(g2[0], g2a[0]);
+    assert close(g2[1], g2a[1]);
+
+    // hessian_fd cross-checked against an independently-derived analytic
+    // Hessian at two different points.
+    let x3: Vec<f64> = vec(0.5);
+    push(mut ref x3, 0.5);
+    let hfd: Vec<f64> = hessian_fd(rosenbrock_fn, ref x3, 2, 1.0e-4);
+    // Analytic Hessian of Rosenbrock: H00=2-400y+1200x^2, H01=H10=-400x, H11=200.
+    assert close_fd2(hfd[0], 2.0 - 400.0 * 0.5 + 1200.0 * 0.25);
+    assert close_fd2(hfd[1], 0.0 - 400.0 * 0.5);
+    assert close_fd2(hfd[2], hfd[1]);
+    assert close_fd2(hfd[3], 200.0);
+
+    // gradient_descent_fixed on the convex sphere function converges to the origin.
+    let x0: Vec<f64> = vec(5.0);
+    push(mut ref x0, 0.0 - 3.0);
+    let xmin: Vec<f64> = gradient_descent_fixed(sphere_fn, sphere_grad, ref x0, 2, 0.1, 1000, 1.0e-10);
+    assert close(xmin[0], 0.0);
+    assert close(xmin[1], 0.0);
+
+    // gradient_descent_backtracking on the convex sphere function.
+    let xmin2: Vec<f64> = gradient_descent_backtracking(sphere_fn, sphere_grad, ref x0, 2, 1000, 1.0e-10);
+    assert close(xmin2[0], 0.0);
+    assert close(xmin2[1], 0.0);
+
+    // gradient_descent_backtracking on the classic hard Rosenbrock case,
+    // starting from the standard difficult point (-1.2, 1).
+    let x_rb0: Vec<f64> = vec(0.0 - 1.2);
+    push(mut ref x_rb0, 1.0);
+    let xmin3: Vec<f64> = gradient_descent_backtracking(rosenbrock_fn, rosenbrock_grad, ref x_rb0, 2, 20000, 1.0e-8);
+    assert close(xmin3[0], 1.0);
+    assert close(xmin3[1], 1.0);
+    assert rosenbrock_fn(ref xmin3, 2) < 1.0e-8;
+
+    // coordinate_descent on the sphere function.
+    let xmin4: Vec<f64> = coordinate_descent(sphere_fn, ref x0, 2, 0.3, 500, 1.0e-10, 1.0e-6);
+    assert close(xmin4[0], 0.0);
+    assert close(xmin4[1], 0.0);
+
+    return 0;
+}

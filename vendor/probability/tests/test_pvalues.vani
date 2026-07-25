@@ -1,0 +1,78 @@
+use "../src/lib.vani";
+
+// Classic two-tailed 95% z critical value: |z|=1.96 -> p ~ 0.05.
+#[test]
+fn test_z_pvalue_table() -> i64 {
+    assert abs(z_pvalue_two_tailed(1.96) - 0.05) < 1.0e-3;
+    return 0;
+}
+
+// z_pvalue_two_tailed is symmetric in sign.
+#[test]
+fn test_z_pvalue_sign_symmetric() -> i64 {
+    assert abs(z_pvalue_two_tailed(1.5) - z_pvalue_two_tailed(0.0 - 1.5)) < 1.0e-12;
+    return 0;
+}
+
+// z=0 -> p=1.0 (no evidence against the null).
+#[test]
+fn test_z_pvalue_zero() -> i64 {
+    assert abs(z_pvalue_two_tailed(0.0) - 1.0) < 1.0e-9;
+    return 0;
+}
+
+// Classic two-tailed 95% t critical value at df=10: |t|=2.228 -> p ~ 0.05.
+#[test]
+fn test_t_pvalue_table() -> i64 {
+    assert abs(t_pvalue_two_tailed(2.228, 10.0) - 0.05) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_t_pvalue_sign_symmetric() -> i64 {
+    assert abs(t_pvalue_two_tailed(1.5, 8.0) - t_pvalue_two_tailed(0.0 - 1.5, 8.0)) < 1.0e-12;
+    return 0;
+}
+
+// Classic chi-squared critical value at df=1: stat=3.841 -> p ~ 0.05.
+#[test]
+fn test_chi_squared_pvalue_table() -> i64 {
+    assert abs(chi_squared_pvalue(3.841, 1.0) - 0.05) < 1.0e-3;
+    return 0;
+}
+
+#[test]
+fn test_chi_squared_pvalue_zero_stat() -> i64 {
+    assert abs(chi_squared_pvalue(0.0, 5.0) - 1.0) < 1.0e-9;
+    return 0;
+}
+
+// Classic F critical value at df1=5, df2=10: f=3.33 -> p ~ 0.05.
+#[test]
+fn test_f_pvalue_table() -> i64 {
+    assert abs(f_pvalue(3.33, 5.0, 10.0) - 0.05) < 1.0e-3;
+    return 0;
+}
+
+// End-to-end: a two-sample t-test on data with a real mean difference
+// should give a small p-value (reject the null of equal means).
+#[test]
+fn test_t_pvalue_end_to_end_significant() -> i64 {
+    let xs: Vec<f64> = vec(10.0);
+    push(mut ref xs, 11.0);
+    push(mut ref xs, 9.0);
+    push(mut ref xs, 10.5);
+    push(mut ref xs, 9.5);
+    let ys: Vec<f64> = vec(20.0);
+    push(mut ref ys, 21.0);
+    push(mut ref ys, 19.0);
+    push(mut ref ys, 20.5);
+    push(mut ref ys, 19.5);
+    let t: f64 = t_stat_two_sample(ref xs, ref ys);
+    let df: f64 = welch_df(ref xs, ref ys);
+    let p: f64 = t_pvalue_two_tailed(t, df);
+    assert p < 0.001;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

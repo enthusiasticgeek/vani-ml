@@ -1,0 +1,48 @@
+// Descriptive statistics demo: summarise a small dataset of exam scores.
+//
+// Run with:  vanic run examples/descriptive_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // 10 exam scores.
+    let scores: Vec<f64> = vec(72.0);
+    push(mut ref scores, 85.0);
+    push(mut ref scores, 63.0);
+    push(mut ref scores, 90.0);
+    push(mut ref scores, 78.0);
+    push(mut ref scores, 55.0);
+    push(mut ref scores, 88.0);
+    push(mut ref scores, 74.0);
+    push(mut ref scores, 92.0);
+    push(mut ref scores, 66.0);
+
+    print "=== Exam score summary (n=10) ===";
+    print "mean:     ", mean(ref scores);
+    print "median:   ", median(ref scores);
+    print "std_dev:  ", std_dev(ref scores);
+    print "variance: ", variance(ref scores);
+    print "min:      ", sample_min(ref scores);
+    print "max:      ", sample_max(ref scores);
+    print "skewness: ", skewness(ref scores);
+    print "kurtosis: ", kurtosis(ref scores);
+
+    // Weighted mean — double-weight for 3 honours students.
+    let weights: Vec<f64> = vec(1.0);
+    push(mut ref weights, 1.0);
+    push(mut ref weights, 1.0);
+    push(mut ref weights, 2.0);
+    push(mut ref weights, 1.0);
+    push(mut ref weights, 1.0);
+    push(mut ref weights, 2.0);
+    push(mut ref weights, 1.0);
+    push(mut ref weights, 2.0);
+    push(mut ref weights, 1.0);
+
+    print "";
+    print "=== Weighted summary (honours students double-weighted) ===";
+    print "weighted mean:     ", weighted_mean(ref scores, ref weights);
+    print "weighted variance: ", weighted_variance(ref scores, ref weights);
+
+    return 0;
+}

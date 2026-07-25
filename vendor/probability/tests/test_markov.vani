@@ -1,0 +1,137 @@
+use "../src/lib.vani";
+
+// 2-state weather chain: Sunny/Rainy. T[i*2+j] = P(state j | state i).
+// Row 0 (Sunny): 0.9 stay sunny, 0.1 -> rainy.
+// Row 1 (Rainy): 0.5 -> sunny, 0.5 stay rainy.
+fn weather_T() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.9);
+    push(mut ref v, 0.1);
+    push(mut ref v, 0.5);
+    push(mut ref v, 0.5);
+    return v;
+}
+
+// Absorbing chain: state 0 absorbing, state 1 -> 0.3 stay / 0.7 -> state 0... wait,
+// row-major P(j|i): row1 = [0.7, 0.3] means from state1, 0.7 -> state0, 0.3 stay.
+fn absorbing_T() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 0.0);
+    push(mut ref v, 0.7);
+    push(mut ref v, 0.3);
+    return v;
+}
+
+// Symmetric doubly-stochastic 2-state chain (uniform stationary distribution,
+// clean closed-form entropy rate = ln(2)).
+fn symmetric_T() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.5);
+    push(mut ref v, 0.5);
+    push(mut ref v, 0.5);
+    push(mut ref v, 0.5);
+    return v;
+}
+
+// markov_step([1,0], T, 2) = [0.9, 0.1] -- one day after a sunny start.
+#[test]
+fn test_markov_step_basic() -> i64 {
+    let T: Vec<f64> = weather_T();
+    let pi0: Vec<f64> = vec(1.0);
+    push(mut ref pi0, 0.0);
+    let pi1: Vec<f64> = markov_step(ref pi0, ref T, 2);
+    assert abs(pi1[0] - 0.9) < 1.0e-12;
+    assert abs(pi1[1] - 0.1) < 1.0e-12;
+    return 0;
+}
+
+// markov_run([1,0], T, 2, steps=2) = [0.86, 0.14] (hand-verified two-step product).
+#[test]
+fn test_markov_run_two_steps() -> i64 {
+    let T: Vec<f64> = weather_T();
+    let pi0: Vec<f64> = vec(1.0);
+    push(mut ref pi0, 0.0);
+    let pi2: Vec<f64> = markov_run(ref pi0, ref T, 2, 2);
+    assert abs(pi2[0] - 0.86) < 1.0e-10;
+    assert abs(pi2[1] - 0.14) < 1.0e-10;
+    return 0;
+}
+
+// markov_run with steps <= 0 returns pi unchanged.
+#[test]
+fn test_markov_run_zero_steps() -> i64 {
+    let T: Vec<f64> = weather_T();
+    let pi0: Vec<f64> = vec(0.3);
+    push(mut ref pi0, 0.7);
+    let pi_out: Vec<f64> = markov_run(ref pi0, ref T, 2, 0);
+    assert abs(pi_out[0] - 0.3) < 1.0e-12;
+    assert abs(pi_out[1] - 0.7) < 1.0e-12;
+    return 0;
+}
+
+// Stationary distribution of the weather chain: pi_sunny = 0.5/0.6, pi_rainy = 0.1/0.6.
+#[test]
+fn test_markov_stationary() -> i64 {
+    let T: Vec<f64> = weather_T();
+    let pi_inf: Vec<f64> = markov_stationary(ref T, 2, 1.0e-12, 10000);
+    assert abs(pi_inf[0] - (0.5 / 0.6)) < 1.0e-8;
+    assert abs(pi_inf[1] - (0.1 / 0.6)) < 1.0e-8;
+    return 0;
+}
+
+// TV distance sanity check: 0.5 * (|0.1| + |0.1|) = 0.1
+#[test]
+fn test_markov_tv_distance() -> i64 {
+    let a: Vec<f64> = vec(0.9);
+    push(mut ref a, 0.1);
+    let b: Vec<f64> = vec(0.8);
+    push(mut ref b, 0.2);
+    assert abs(markov_tv_distance(ref a, ref b, 2) - 0.1) < 1.0e-12;
+    return 0;
+}
+
+// State 0 is absorbing in absorbing_T; state 1 is not.
+#[test]
+fn test_markov_is_absorbing_state() -> i64 {
+    let T: Vec<f64> = absorbing_T();
+    assert markov_is_absorbing_state(ref T, 2, 0) == true;
+    assert markov_is_absorbing_state(ref T, 2, 1) == false;
+    return 0;
+}
+
+// weather_T is not absorbing anywhere.
+#[test]
+fn test_markov_is_absorbing_state_false_case() -> i64 {
+    let T: Vec<f64> = weather_T();
+    assert markov_is_absorbing_state(ref T, 2, 0) == false;
+    assert markov_is_absorbing_state(ref T, 2, 1) == false;
+    return 0;
+}
+
+// After markov_mixing_steps() steps from uniform, TV distance to the stationary
+// distribution should be below eps (cross-validated via markov_run + markov_stationary).
+#[test]
+fn test_markov_mixing_steps_converges() -> i64 {
+    let T: Vec<f64> = weather_T();
+    let eps: f64 = 0.01;
+    let steps: i64 = markov_mixing_steps(ref T, 2, eps, 1000);
+    assert steps >= 0;
+    let pi0: Vec<f64> = vec(0.5);
+    push(mut ref pi0, 0.5);
+    let reached: Vec<f64> = markov_run(ref pi0, ref T, 2, steps);
+    let pi_inf: Vec<f64> = markov_stationary(ref T, 2, 1.0e-12, 10000);
+    assert markov_tv_distance(ref reached, ref pi_inf, 2) < eps + 1.0e-9;
+    return 0;
+}
+
+// Entropy rate of a symmetric doubly-stochastic chain at its uniform stationary
+// distribution: H = -Sigma pi_i Sigma_j T[i,j] log T[i,j] = ln(2).
+#[test]
+fn test_markov_entropy_rate_symmetric() -> i64 {
+    let T: Vec<f64> = symmetric_T();
+    let pi: Vec<f64> = vec(0.5);
+    push(mut ref pi, 0.5);
+    let h: f64 = markov_entropy_rate(ref T, 2, ref pi);
+    assert abs(h - log(2.0)) < 1.0e-10;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

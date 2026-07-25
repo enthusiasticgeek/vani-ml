@@ -1,0 +1,70 @@
+// Tests for Newton's method (analytic and finite-difference variants) and
+// the quadratic specialty solvers.
+// Run with:  vanic test tests/test_newton_quadratic.vani
+
+use "../src/lib.vani";
+
+fn close(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-6;
+}
+
+fn close_loose(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-3;
+}
+
+// Analytic Hessian of rosenbrock_fn, for exercising newton_nd's
+// analytic-callback path independently from hessian_fd.
+#[bounded_stack(bytes = 120)]
+fn hessian_analytic_rosenbrock(x: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let h00: f64 = 2.0 - 400.0 * x[1] + 1200.0 * x[0] * x[0];
+    let h01: f64 = 0.0 - 400.0 * x[0];
+    let out: Vec<f64> = vec(h00);
+    push(mut ref out, h01);
+    push(mut ref out, h01);
+    push(mut ref out, 200.0);
+    return out;
+}
+
+fn main() -> i64 {
+    // newton_nd (analytic gradient + Hessian) on Rosenbrock from the standard
+    // hard starting point (-1.2, 1): quadratic convergence should reach the
+    // minimum (1,1) to tight precision in well under 20 iterations.
+    let x0: Vec<f64> = vec(0.0 - 1.2);
+    push(mut ref x0, 1.0);
+    let xn: Vec<f64> = newton_nd(rosenbrock_fn, rosenbrock_grad, hessian_analytic_rosenbrock, ref x0, 2, 20, 1.0e-10);
+    assert close(xn[0], 1.0);
+    assert close(xn[1], 1.0);
+    assert rosenbrock_fn(ref xn, 2) < 1.0e-12;
+
+    // newton_nd_fd (fully derivative-free) on the same problem -- looser
+    // tolerance since both the gradient and Hessian are finite-difference
+    // approximations.
+    let x1: Vec<f64> = vec(0.0 - 1.2);
+    push(mut ref x1, 1.0);
+    let xnfd: Vec<f64> = newton_nd_fd(rosenbrock_fn, ref x1, 2, 20, 1.0e-8, 1.0e-4);
+    assert close_loose(xnfd[0], 1.0);
+    assert close_loose(xnfd[1], 1.0);
+
+    // quadratic_minimize: minimize 0.5 x^T Q x + b^T x for
+    // Q = [[4,1],[1,3]], b = [1,2]. Closed-form minimizer x = -Q^-1 b.
+    // Q^-1 = 1/11 [[3,-1],[-1,4]], so x = -1/11 [3*1-1*2, -1*1+4*2] = -1/11 [1,7].
+    let Q: Vec<f64> = vec(4.0);
+    push(mut ref Q, 1.0);
+    push(mut ref Q, 1.0);
+    push(mut ref Q, 3.0);
+    let b: Vec<f64> = vec(1.0);
+    push(mut ref b, 2.0);
+    let xq: Vec<f64> = quadratic_minimize(ref Q, ref b, 2);
+    assert close(xq[0], 0.0 - 1.0 / 11.0);
+    assert close(xq[1], 0.0 - 7.0 / 11.0);
+
+    // steepest_descent_quadratic on the same Q,b, starting from the origin,
+    // should converge to the same closed-form minimizer.
+    let x0b: Vec<f64> = vec(0.0);
+    push(mut ref x0b, 0.0);
+    let xsd: Vec<f64> = steepest_descent_quadratic(ref Q, ref b, ref x0b, 2, 500, 1.0e-12);
+    assert close_loose(xsd[0], 0.0 - 1.0 / 11.0);
+    assert close_loose(xsd[1], 0.0 - 7.0 / 11.0);
+
+    return 0;
+}

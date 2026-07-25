@@ -1,0 +1,1732 @@
+// vani-probability  v0.4.0 — probability and statistics library
+//
+// IMPORTANT — do NOT reimplement vāṇī compiler builtins.
+// Already available as builtins (call directly, never redeclare here):
+//   f64_normal_pdf(x, mean, sd)  f64_normal_cdf(x, mean, sd)
+//   rand_normal()  -- standard normal N(0,1); scale/shift yourself: mean + sd*rand_normal()
+//   rand_uniform(lo, hi)  rand_i64(lo, hi)
+//   rand_f64()  rand_bool(p)  rand_in_range(lo, hi)
+//   f64_erf  f64_erfc  f64_tgamma  f64_lgamma
+//   i64_factorial  i64_binomial  i64_perm
+//   f64_geometric_mean  f64_harmonic_mean  f64_quadratic_mean  f64_l1_norm
+//   abs  sqrt  exp  log  log2  pow
+//
+// v0.4.0 depends on vani-matrix for dense linear algebra (mat_mul_rect,
+// mat_inv_n, mat_transpose, mat_vec_mul, vec_norm2, dot_n, vec_outer),
+// added via `vanic add matrix` (vendored + checksum-verified) -- see
+// [deps] in vani.toml. No `use` statement needed: vanic auto-includes
+// every [deps] entry's source before compiling.
+//
+// WCET (MAINT-1, added 2026-07-21 -- see kosh-index/ROADMAP.md): most
+// functions already carried a hand-written "WCET ≈ N cycles" (flat) or
+// "WCET = <formula>" (loop-dependent) comment from earlier work on this
+// package -- this pass turned the flat estimates into real, vanic
+// check-exact #[wcet(cycles=N)] attributes (24 functions; several needed
+// a second harvest pass once their callees were fixed, same bottom-up
+// process as vani-complex/vani-interval/vani-geometry) and added a WCET
+// note to every function that didn't already have one. Functions calling
+// _gamma_reg_series/_gamma_reg_cf/_beta_cf (`while n < 200` continued-
+// fraction/series loops -- literal-bounded in practice, but the checker
+// only special-cases const-bound `for` loops) are unbounded to the
+// checker regardless of how many wrapper layers separate them from that
+// loop; this propagates through chi_squared_cdf/gamma_cdf/t_cdf/
+// beta_cdf/f_cdf and every p-value function built on them.
+
+// Ascending comparator for sort_by on Vec<f64> (F64-1, landed in the
+// compiler 2026-07-13). Negative/zero/positive per the strcmp convention.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 31)]
+fn _f64_asc(a: f64, b: f64) -> i64 {
+    if a < b { return -1; }
+    if a > b { return 1; }
+    return 0;
+}
+
+// Sorted ascending copy of xs; does not mutate the caller's Vec. WCET:
+// O(n) copy + sort_by's O(n log n) -- O(n log n).
+#[bounded_stack(bytes = 112)]
+fn _sorted_copy(xs: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, xs[i]);
+        i = i + 1;
+    }
+    sort_by(mut ref out, _f64_asc);
+    return out;
+}
+
+// ── Descriptive statistics ─────────────────────────────────────────────────────
+
+// Arithmetic mean. WCET = n × 12 cycles.
+#[bounded_stack(bytes = 96)]
+fn mean(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + xs[i];
+        i = i + 1;
+    }
+    return s / (n as f64);
+}
+
+// Bessel-corrected sample variance (denominator n−1).
+// Two-pass: compute mean first, then Σ(xᵢ−m)². WCET = 2n × 16 cycles.
+#[bounded_stack(bytes = 208)]
+fn variance(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 2 { return 0.0; }
+    let m: f64 = mean(xs);
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = xs[i] - m;
+        s = s + d * d;
+        i = i + 1;
+    }
+    return s / ((n - 1) as f64);
+}
+
+// Sample standard deviation: sqrt of Bessel-corrected variance.
+#[bounded_stack(bytes = 256)]
+fn std_dev(xs: ref Vec<f64>) -> f64 {
+    return sqrt(variance(xs));
+}
+
+// Median via sort_by (F64-1 landed 2026-07-13; this used to be an O(n²)
+// insertion sort worked around the missing builtin -- see TODO.md history).
+// WCET dominated by the sort; O(n log n) expected.
+#[bounded_stack(bytes = 208)]
+fn median(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    if n == 1 { return xs[0]; }
+    let sorted: Vec<f64> = _sorted_copy(xs);
+    if n % 2 == 1 {
+        return sorted[n / 2];
+    } else {
+        return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+    }
+}
+
+// Fisher-Pearson sample skewness: n/((n−1)(n−2)) × Σ((xᵢ−m)/s)³.
+// WCET = 3n × 20 cycles.
+#[bounded_stack(bytes = 392)]
+fn skewness(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 3 { return 0.0; }
+    let m: f64 = mean(xs);
+    let s: f64 = std_dev(xs);
+    if s < 1.0e-15 { return 0.0; }
+    let sum: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = (xs[i] - m) / s;
+        sum = sum + d * d * d;
+        i = i + 1;
+    }
+    let nf: f64 = n as f64;
+    return (nf / ((nf - 1.0) * (nf - 2.0))) * sum;
+}
+
+// Adjusted Fisher-Pearson excess kurtosis.
+// WCET = 3n × 22 cycles.
+#[bounded_stack(bytes = 408)]
+fn kurtosis(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 4 { return 0.0; }
+    let m: f64 = mean(xs);
+    let s: f64 = std_dev(xs);
+    if s < 1.0e-15 { return 0.0; }
+    let sum: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = (xs[i] - m) / s;
+        sum = sum + d * d * d * d;
+        i = i + 1;
+    }
+    let nf: f64 = n as f64;
+    let a: f64 = nf * (nf + 1.0) / ((nf - 1.0) * (nf - 2.0) * (nf - 3.0));
+    let b: f64 = 3.0 * (nf - 1.0) * (nf - 1.0) / ((nf - 2.0) * (nf - 3.0));
+    return a * sum - b;
+}
+
+// Minimum of a sample Vec. WCET = n × 8 cycles.
+#[bounded_stack(bytes = 96)]
+fn sample_min(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    let m: f64 = xs[0];
+    let i: i64 = 1;
+    while i < n {
+        if xs[i] < m { m = xs[i]; }
+        i = i + 1;
+    }
+    return m;
+}
+
+// Maximum of a sample Vec. WCET = n × 8 cycles.
+#[bounded_stack(bytes = 96)]
+fn sample_max(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    let m: f64 = xs[0];
+    let i: i64 = 1;
+    while i < n {
+        if xs[i] > m { m = xs[i]; }
+        i = i + 1;
+    }
+    return m;
+}
+
+// Weighted arithmetic mean: Σ(wᵢ xᵢ) / Σwᵢ. WCET = n × 16 cycles.
+#[bounded_stack(bytes = 128)]
+fn weighted_mean(xs: ref Vec<f64>, ws: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    let sw: f64 = 0.0;
+    let swx: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        sw = sw + ws[i];
+        swx = swx + ws[i] * xs[i];
+        i = i + 1;
+    }
+    if sw < 1.0e-15 { return 0.0; }
+    return swx / sw;
+}
+
+// Reliability-weighted sample variance: Σwᵢ(xᵢ−m̄)² / (W − W₂/W),
+// where W = Σwᵢ, W₂ = Σwᵢ². WCET = 2n × 20 cycles.
+#[bounded_stack(bytes = 296)]
+fn weighted_variance(xs: ref Vec<f64>, ws: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 2 { return 0.0; }
+    let m: f64 = weighted_mean(xs, ws);
+    let sw: f64 = 0.0;
+    let sw2: f64 = 0.0;
+    let ss: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = xs[i] - m;
+        ss = ss + ws[i] * d * d;
+        sw = sw + ws[i];
+        sw2 = sw2 + ws[i] * ws[i];
+        i = i + 1;
+    }
+    let denom: f64 = sw - sw2 / sw;
+    if denom < 1.0e-15 { return 0.0; }
+    return ss / denom;
+}
+
+// ── Discrete distributions ─────────────────────────────────────────────────────
+// Note: i64_binomial(n,k) and i64_factorial(k) are builtins; PMFs/CDFs are not.
+
+// Binomial PMF: P(X=k) = C(n,k) p^k (1−p)^{n−k}. WCET ≈ 200 cycles.
+#[bounded_stack(bytes = 80)]
+#[wcet(cycles = 135)]
+fn binomial_pmf(n: i64, k: i64, p: f64) -> f64 {
+    if k < 0 || k > n { return 0.0; }
+    let c: f64 = i64_binomial(n, k) as f64;
+    return c * pow(p, k as f64) * pow(1.0 - p, (n - k) as f64);
+}
+
+// Binomial CDF: P(X ≤ k) = Σᵢ₌₀ᵏ binomial_pmf(n,i,p).
+// WCET = (k+1) × 200 cycles.
+#[bounded_stack(bytes = 192)]
+fn binomial_cdf(n: i64, k: i64, p: f64) -> f64 {
+    if k < 0 { return 0.0; }
+    if k >= n { return 1.0; }
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i <= k {
+        s = s + binomial_pmf(n, i, p);
+        i = i + 1;
+    }
+    return s;
+}
+
+// Poisson PMF: P(X=k) = λ^k e^{−λ} / k!. WCET ≈ 200 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 125)]
+fn poisson_pmf(lambda: f64, k: i64) -> f64 {
+    if k < 0 { return 0.0; }
+    return pow(lambda, k as f64) * exp(0.0 - lambda) / (i64_factorial(k) as f64);
+}
+
+// Poisson CDF: P(X ≤ k) = Σᵢ₌₀ᵏ poisson_pmf(λ,i).
+// WCET = (k+1) × 200 cycles.
+#[bounded_stack(bytes = 160)]
+fn poisson_cdf(lambda: f64, k: i64) -> f64 {
+    if k < 0 { return 0.0; }
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i <= k {
+        s = s + poisson_pmf(lambda, i);
+        i = i + 1;
+    }
+    return s;
+}
+
+// Geometric PMF (trials until first success): P(X=k) = (1−p)^{k−1} p. WCET ≈ 120 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 54)]
+fn geometric_pmf(p: f64, k: i64) -> f64 {
+    if k < 1 { return 0.0; }
+    return pow(1.0 - p, (k - 1) as f64) * p;
+}
+
+// Geometric CDF: P(X ≤ k) = 1 − (1−p)^k. WCET ≈ 100 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 51)]
+fn geometric_cdf(p: f64, k: i64) -> f64 {
+    if k < 1 { return 0.0; }
+    return 1.0 - pow(1.0 - p, k as f64);
+}
+
+// Negative binomial PMF: P(X=k) = C(k+r−1, k) p^r (1−p)^k.
+// r = target successes, k = failures before r-th success. WCET ≈ 200 cycles.
+#[bounded_stack(bytes = 80)]
+#[wcet(cycles = 132)]
+fn negative_binomial_pmf(r: i64, k: i64, p: f64) -> f64 {
+    if k < 0 { return 0.0; }
+    let c: f64 = i64_binomial(k + r - 1, k) as f64;
+    return c * pow(p, r as f64) * pow(1.0 - p, k as f64);
+}
+
+// Hypergeometric PMF: P(X=k) = C(K,k) C(N−K, n−k) / C(N,n).
+// N = population size, K = success states, n = draws, k = observed successes.
+// WCET ≈ 400 cycles.
+#[bounded_stack(bytes = 104)]
+#[wcet(cycles = 198)]
+fn hypergeometric_pmf(N: i64, K: i64, n: i64, k: i64) -> f64 {
+    if k < 0 || k > K || k > n || n - k > N - K { return 0.0; }
+    let num: f64 = (i64_binomial(K, k) as f64) * (i64_binomial(N - K, n - k) as f64);
+    let den: f64 = i64_binomial(N, n) as f64;
+    if den < 1.0e-15 { return 0.0; }
+    return num / den;
+}
+
+// ── Continuous distributions ───────────────────────────────────────────────────
+// Normal distribution: use builtins f64_normal_pdf(x,mean,sd) / f64_normal_cdf(x,mean,sd).
+
+// Exponential PDF: f(x;λ) = λ e^{−λx}, x ≥ 0. WCET ≈ 80 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 57)]
+fn exponential_pdf(lambda: f64, x: f64) -> f64 {
+    if x < 0.0 { return 0.0; }
+    return lambda * exp(0.0 - lambda * x);
+}
+
+// Exponential CDF: F(x;λ) = 1 − e^{−λx}. WCET ≈ 80 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 57)]
+fn exponential_cdf(lambda: f64, x: f64) -> f64 {
+    if x < 0.0 { return 0.0; }
+    return 1.0 - exp(0.0 - lambda * x);
+}
+
+// Inverse-CDF sample from Exponential(λ): −log(U)/λ, U ~ Uniform(0,1). WCET ≈ 100 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 68)]
+fn sample_exponential(lambda: f64) -> f64 {
+    let u: f64 = rand_f64();
+    if u < 1.0e-15 { u = 1.0e-15; }
+    return (0.0 - log(u)) / lambda;
+}
+
+// Uniform PDF on [a,b]: 1/(b−a) for a ≤ x ≤ b, else 0. WCET ≈ 48 cycles.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 30)]
+fn uniform_pdf(a: f64, b: f64, x: f64) -> f64 {
+    if x < a || x > b { return 0.0; }
+    return 1.0 / (b - a);
+}
+
+// Uniform CDF: (x−a)/(b−a) clamped to [0,1]. WCET ≈ 48 cycles.
+#[bounded_stack(bytes = 80)]
+#[wcet(cycles = 39)]
+fn uniform_cdf(a: f64, b: f64, x: f64) -> f64 {
+    if x <= a { return 0.0; }
+    if x >= b { return 1.0; }
+    return (x - a) / (b - a);
+}
+
+// Student's t-PDF with df degrees of freedom. WCET ≈ 300 cycles.
+// Uses builtins f64_tgamma, sqrt, pow.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 177)]
+fn t_pdf(df: f64, x: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let c: f64 = f64_tgamma((df + 1.0) / 2.0) / (sqrt(df * pi) * f64_tgamma(df / 2.0));
+    return c * pow(1.0 + x * x / df, 0.0 - (df + 1.0) / 2.0);
+}
+
+// Beta PDF: f(x;α,β) = x^{α−1}(1−x)^{β−1} / B(α,β), for 0 < x < 1. WCET ≈ 350 cycles.
+// B(α,β) = Γ(α)Γ(β)/Γ(α+β). Uses builtin f64_tgamma.
+#[bounded_stack(bytes = 80)]
+#[wcet(cycles = 223)]
+fn beta_pdf(alpha: f64, beta: f64, x: f64) -> f64 {
+    if x <= 0.0 || x >= 1.0 { return 0.0; }
+    let B: f64 = f64_tgamma(alpha) * f64_tgamma(beta) / f64_tgamma(alpha + beta);
+    return pow(x, alpha - 1.0) * pow(1.0 - x, beta - 1.0) / B;
+}
+
+// Chi-squared PDF with k degrees of freedom. WCET ≈ 280 cycles.
+// f(x;k) = x^{k/2−1} e^{−x/2} / (2^{k/2} Γ(k/2)), x > 0.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 167)]
+fn chi_squared_pdf(k: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    return pow(x, k / 2.0 - 1.0) * exp(0.0 - x / 2.0) / (pow(2.0, k / 2.0) * f64_tgamma(k / 2.0));
+}
+
+// Gamma PDF with shape α and rate β: f(x;α,β) = β^α x^{α−1} e^{−βx} / Γ(α), x > 0. WCET ≈ 280 cycles.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 158)]
+fn gamma_pdf(shape: f64, rate: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    return pow(rate, shape) * pow(x, shape - 1.0) * exp(0.0 - rate * x) / f64_tgamma(shape);
+}
+
+// Laplace PDF: f(x;μ,b) = e^{−|x−μ|/b} / (2b). WCET ≈ 80 cycles.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 56)]
+fn laplace_pdf(mu: f64, b: f64, x: f64) -> f64 {
+    return exp(0.0 - abs(x - mu) / b) / (2.0 * b);
+}
+
+// Log-normal PDF: if X = e^Y and Y ~ N(μ,σ²), f(x) = φ(log x; μ,σ) / x, x > 0. WCET ≈ 120 cycles.
+// Uses builtin f64_normal_pdf.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 58)]
+fn log_normal_pdf(mu: f64, sigma: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    return f64_normal_pdf(log(x), mu, sigma) / x;
+}
+
+// ── Correlation and regression ─────────────────────────────────────────────────
+
+// Sample covariance: Σ(xᵢ−x̄)(yᵢ−ȳ) / (n−1). WCET = 3n × 16 cycles.
+#[bounded_stack(bytes = 216)]
+fn covariance(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 2 { return 0.0; }
+    let mx: f64 = mean(xs);
+    let my: f64 = mean(ys);
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + (xs[i] - mx) * (ys[i] - my);
+        i = i + 1;
+    }
+    return s / ((n - 1) as f64);
+}
+
+// Pearson correlation coefficient: cov(xs,ys) / (std_dev(xs) × std_dev(ys)).
+// WCET = 7n × 16 cycles.
+#[bounded_stack(bytes = 336)]
+fn pearson_r(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let sx: f64 = std_dev(xs);
+    let sy: f64 = std_dev(ys);
+    if sx < 1.0e-15 || sy < 1.0e-15 { return 0.0; }
+    return covariance(xs, ys) / (sx * sy);
+}
+
+// OLS slope: cov(xs,ys) / var(xs). WCET = 5n × 16 cycles.
+#[bounded_stack(bytes = 288)]
+fn ols_slope(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let vx: f64 = variance(xs);
+    if vx < 1.0e-15 { return 0.0; }
+    return covariance(xs, ys) / vx;
+}
+
+// OLS intercept: ȳ − slope × x̄. WCET = 7n × 16 cycles.
+#[bounded_stack(bytes = 344)]
+fn ols_intercept(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    return mean(ys) - ols_slope(xs, ys) * mean(xs);
+}
+
+// OLS coefficient of determination R²: (pearson_r)². WCET = 7n × 16 cycles.
+#[bounded_stack(bytes = 400)]
+fn ols_r_squared(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let r: f64 = pearson_r(xs, ys);
+    return r * r;
+}
+
+// ── Information theory ─────────────────────────────────────────────────────────
+
+// Shannon entropy H(p) = −Σ pᵢ log₂(pᵢ) [bits]. Uses builtin log2.
+// WCET = n × 32 cycles.
+#[bounded_stack(bytes = 96)]
+fn shannon_entropy(ps: ref Vec<f64>) -> f64 {
+    let n: i64 = len(ps) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let p: f64 = ps[i];
+        if p > 0.0 { s = s - p * log2(p); }
+        i = i + 1;
+    }
+    return s;
+}
+
+// KL divergence D_KL(p‖q) = Σ pᵢ log(pᵢ/qᵢ) [nats]. Uses builtin log.
+// WCET = n × 36 cycles.
+#[bounded_stack(bytes = 112)]
+fn kl_divergence(ps: ref Vec<f64>, qs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(ps) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let p: f64 = ps[i];
+        let q: f64 = qs[i];
+        if p > 0.0 && q > 0.0 { s = s + p * log(p / q); }
+        i = i + 1;
+    }
+    return s;
+}
+
+// Cross-entropy H(p,q) = −Σ pᵢ log(qᵢ) [nats]. Uses builtin log.
+// WCET = n × 36 cycles.
+#[bounded_stack(bytes = 112)]
+fn cross_entropy(ps: ref Vec<f64>, qs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(ps) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let p: f64 = ps[i];
+        let q: f64 = qs[i];
+        if p > 0.0 && q > 0.0 { s = s - p * log(q); }
+        i = i + 1;
+    }
+    return s;
+}
+
+// Rényi entropy H_α(p) = log(Σ pᵢ^α) / (1−α) [nats].
+// At α→1 the limit equals natural-log Shannon entropy; handled separately.
+// WCET = n × 40 cycles.
+#[bounded_stack(bytes = 144)]
+fn renyi_entropy(ps: ref Vec<f64>, alpha: f64) -> f64 {
+    let n: i64 = len(ps) as i64;
+    if abs(alpha - 1.0) < 1.0e-12 {
+        let s2: f64 = 0.0;
+        let j: i64 = 0;
+        while j < n {
+            let p: f64 = ps[j];
+            if p > 0.0 { s2 = s2 - p * log(p); }
+            j = j + 1;
+        }
+        return s2;
+    }
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        if ps[i] > 0.0 { s = s + pow(ps[i], alpha); }
+        i = i + 1;
+    }
+    return log(s) / (1.0 - alpha);
+}
+
+// ── Hypothesis testing ─────────────────────────────────────────────────────────
+
+// One-sample t-statistic: (x̄ − μ₀) / (s / √n). WCET = 3n × 16 cycles.
+#[bounded_stack(bytes = 344)]
+fn t_stat_one_sample(xs: ref Vec<f64>, mu0: f64) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n < 2 { return 0.0; }
+    let s: f64 = std_dev(xs);
+    if s < 1.0e-15 { return 0.0; }
+    return (mean(xs) - mu0) / (s / sqrt(n as f64));
+}
+
+// Welch two-sample t-statistic: (x̄−ȳ) / √(s²ₓ/nₓ + s²ᵧ/nᵧ).
+// WCET = 7n × 16 cycles.
+#[bounded_stack(bytes = 320)]
+fn t_stat_two_sample(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let nx: i64 = len(xs) as i64;
+    let ny: i64 = len(ys) as i64;
+    if nx < 2 || ny < 2 { return 0.0; }
+    let vx: f64 = variance(xs);
+    let vy: f64 = variance(ys);
+    let denom: f64 = sqrt(vx / (nx as f64) + vy / (ny as f64));
+    if denom < 1.0e-15 { return 0.0; }
+    return (mean(xs) - mean(ys)) / denom;
+}
+
+// Chi-squared goodness-of-fit statistic: Σ (obsᵢ−expᵢ)² / expᵢ.
+// WCET = n × 20 cycles.
+#[bounded_stack(bytes = 112)]
+fn chi_squared_stat(observed: ref Vec<f64>, expected: ref Vec<f64>) -> f64 {
+    let n: i64 = len(observed) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let e: f64 = expected[i];
+        if e > 0.0 {
+            let d: f64 = observed[i] - e;
+            s = s + d * d / e;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+// z-statistic for a known population σ: (x̄ − μ₀) / (σ / √n).
+// WCET = n × 14 cycles.
+#[bounded_stack(bytes = 176)]
+fn z_stat(xs: ref Vec<f64>, mu0: f64, sigma: f64) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 || sigma < 1.0e-15 { return 0.0; }
+    return (mean(xs) - mu0) / (sigma / sqrt(n as f64));
+}
+
+// ── Bayesian inference ─────────────────────────────────────────────────────────
+
+// Conditional probability P(A|B) = P(A∩B) / P(B). Guards P(B) > 0.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 21)]
+fn conditional_prob(p_ab: f64, p_b: f64) -> f64 {
+    if p_b < 1.0e-15 { return 0.0; }
+    return p_ab / p_b;
+}
+
+// Law of total probability: P(B) = Σᵢ P(B|Aᵢ) P(Aᵢ) -- dot product of priors and
+// per-hypothesis likelihoods. WCET = n × 12 cycles.
+#[bounded_stack(bytes = 96)]
+fn law_of_total_prob(priors: ref Vec<f64>, likelihoods: ref Vec<f64>) -> f64 {
+    let n: i64 = len(priors) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + priors[i] * likelihoods[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// Unnormalised Bayesian posterior: pᵢ = priorᵢ × likelihoodᵢ for each hypothesis.
+// Call normalize_probs() on the result to get a proper distribution. WCET = n × 12 cycles.
+#[bounded_stack(bytes = 120)]
+fn bayes_posterior(priors: ref Vec<f64>, likelihoods: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(priors) as i64;
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, priors[i] * likelihoods[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Normalise a Vec so it sums to 1.0. Returns all-zero if the input sums to ~0.
+// WCET = 2n × 10 cycles.
+#[bounded_stack(bytes = 184)]
+fn normalize_probs(ps: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(ps) as i64;
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + ps[i];
+        i = i + 1;
+    }
+    let out: Vec<f64> = vec();
+    if s < 1.0e-15 {
+        let j: i64 = 0;
+        while j < n {
+            push(mut ref out, 0.0);
+            j = j + 1;
+        }
+        return out;
+    }
+    let k: i64 = 0;
+    while k < n {
+        push(mut ref out, ps[k] / s);
+        k = k + 1;
+    }
+    return out;
+}
+
+// Log-space unnormalised posterior: log_pᵢ = log_priorᵢ + log_likelihoodᵢ.
+// Avoids underflow when priors/likelihoods are tiny (many features multiplied
+// together). WCET = n × 10 cycles.
+#[bounded_stack(bytes = 120)]
+fn bayes_log_posterior(log_priors: ref Vec<f64>, log_likelihoods: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(log_priors) as i64;
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, log_priors[i] + log_likelihoods[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Naive Bayes classification: for each class c, score = log_prior[c] + Σf log_likelihood[c,f].
+// log_likelihoods_flat is row-major n_classes × n_features. Returns the argmax class index.
+// WCET = n_classes × n_features × 14 cycles.
+#[bounded_stack(bytes = 152)]
+fn naive_bayes_classify(log_priors: ref Vec<f64>, log_likelihoods_flat: ref Vec<f64>, n_classes: i64, n_features: i64) -> i64 {
+    let best_class: i64 = 0;
+    let best_score: f64 = 0.0;
+    let c: i64 = 0;
+    while c < n_classes {
+        let score: f64 = log_priors[c];
+        let f: i64 = 0;
+        while f < n_features {
+            score = score + log_likelihoods_flat[c * n_features + f];
+            f = f + 1;
+        }
+        if c == 0 || score > best_score {
+            best_score = score;
+            best_class = c;
+        }
+        c = c + 1;
+    }
+    return best_class;
+}
+
+// ── Discrete-time Markov chains ─────────────────────────────────────────────────
+// Transition matrix T is row-major flat: T[i*n + j] = P(state j | state i).
+// Row sums must equal 1.0. A distribution π is a Vec<f64> of length n.
+
+// One Markov step: new_pi[j] = Σᵢ pi[i] × T[i*n+j]. WCET = n² × 12 cycles.
+#[bounded_stack(bytes = 152)]
+fn markov_step(pi: ref Vec<f64>, T: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let j: i64 = 0;
+    while j < n {
+        let s: f64 = 0.0;
+        let i: i64 = 0;
+        while i < n {
+            s = s + pi[i] * T[i * n + j];
+            i = i + 1;
+        }
+        push(mut ref out, s);
+        j = j + 1;
+    }
+    return out;
+}
+
+// Total variation distance between two distributions: 0.5 × Σ|πᵢ − qᵢ|.
+// WCET = n × 10 cycles.
+#[bounded_stack(bytes = 96)]
+fn markov_tv_distance(pi: ref Vec<f64>, qi: ref Vec<f64>, n: i64) -> f64 {
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + abs(pi[i] - qi[i]);
+        i = i + 1;
+    }
+    return 0.5 * s;
+}
+
+// Apply markov_step `steps` times starting from pi; returns the resulting distribution.
+// steps <= 0 returns a copy of pi unchanged. WCET = steps × n² × 12 cycles.
+#[bounded_stack(bytes = 336)]
+fn markov_run(pi: ref Vec<f64>, T: ref Vec<f64>, n: i64, steps: i64) -> Vec<f64> {
+    let cur: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref cur, pi[i]);
+        i = i + 1;
+    }
+    let k: i64 = 0;
+    while k < steps {
+        let nxt: Vec<f64> = markov_step(ref cur, T, n);
+        let j: i64 = 0;
+        while j < n {
+            set(mut ref cur, j, nxt[j]);
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return cur;
+}
+
+// Stationary distribution via power iteration from a uniform start; stops early once
+// the TV distance between successive iterates drops below tol, else runs max_iter steps.
+// WCET = max_iter × n² × 12 cycles.
+#[bounded_stack(bytes = 376)]
+fn markov_stationary(T: ref Vec<f64>, n: i64, tol: f64, max_iter: i64) -> Vec<f64> {
+    let cur: Vec<f64> = vec();
+    let u: f64 = 1.0 / (n as f64);
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref cur, u);
+        i = i + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let nxt: Vec<f64> = markov_step(ref cur, T, n);
+        let dist: f64 = markov_tv_distance(ref cur, ref nxt, n);
+        let j: i64 = 0;
+        while j < n {
+            set(mut ref cur, j, nxt[j]);
+            j = j + 1;
+        }
+        if dist < tol { return cur; }
+        iter = iter + 1;
+    }
+    return cur;
+}
+
+// True iff state `state` is absorbing: T[state,state] == 1.0.
+#[bounded_stack(bytes = 57)]
+#[wcet(cycles = 26)]
+fn markov_is_absorbing_state(T: ref Vec<f64>, n: i64, state: i64) -> bool {
+    return abs(T[state * n + state] - 1.0) < 1.0e-12;
+}
+
+// Steps from a uniform start until TV(π_k, π∞) < eps -- an upper bound on mixing time.
+// Returns max_iter if it never drops below eps in that many steps.
+// WCET = max_iter × n² × 12 cycles (plus one markov_stationary call).
+#[bounded_stack(bytes = 592)]
+fn markov_mixing_steps(T: ref Vec<f64>, n: i64, eps: f64, max_iter: i64) -> i64 {
+    let pi_inf: Vec<f64> = markov_stationary(T, n, 1.0e-12, max_iter);
+    let cur: Vec<f64> = vec();
+    let u: f64 = 1.0 / (n as f64);
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref cur, u);
+        i = i + 1;
+    }
+    let step: i64 = 0;
+    while step < max_iter {
+        let dist: f64 = markov_tv_distance(ref cur, ref pi_inf, n);
+        if dist < eps { return step; }
+        let nxt: Vec<f64> = markov_step(ref cur, T, n);
+        let j: i64 = 0;
+        while j < n {
+            set(mut ref cur, j, nxt[j]);
+            j = j + 1;
+        }
+        step = step + 1;
+    }
+    return max_iter;
+}
+
+// Entropy rate of the chain at distribution π: H = −Σᵢ πᵢ Σⱼ T[i,j] log T[i,j] [nats].
+// WCET = n² × 20 cycles.
+#[bounded_stack(bytes = 136)]
+fn markov_entropy_rate(T: ref Vec<f64>, n: i64, pi: ref Vec<f64>) -> f64 {
+    let h: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let row_h: f64 = 0.0;
+        let j: i64 = 0;
+        while j < n {
+            let p: f64 = T[i * n + j];
+            if p > 0.0 { row_h = row_h - p * log(p); }
+            j = j + 1;
+        }
+        h = h + pi[i] * row_h;
+        i = i + 1;
+    }
+    return h;
+}
+
+// ── Time series and streaming statistics ────────────────────────────────────────
+
+// Simple moving average with window `window`; returns a Vec of length n−window+1.
+// Empty Vec if window <= 0 or window > n. WCET = n × window × 10 cycles.
+#[bounded_stack(bytes = 176)]
+fn moving_average(xs: ref Vec<f64>, window: i64) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    if window <= 0 || window > n { return out; }
+    let i: i64 = 0;
+    while i <= n - window {
+        let s: f64 = 0.0;
+        let j: i64 = 0;
+        while j < window {
+            s = s + xs[i + j];
+            j = j + 1;
+        }
+        push(mut ref out, s / (window as f64));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Exponential moving average: ema[0] = xs[0]; ema[i] = alpha×xs[i] + (1−alpha)×ema[i−1].
+// Returns a Vec the same length as xs. WCET = n × 10 cycles.
+#[bounded_stack(bytes = 168)]
+fn ema(xs: ref Vec<f64>, alpha: f64) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    if n == 0 { return out; }
+    push(mut ref out, xs[0]);
+    let prev: f64 = xs[0];
+    let i: i64 = 1;
+    while i < n {
+        let cur_v: f64 = alpha * xs[i] + (1.0 - alpha) * prev;
+        push(mut ref out, cur_v);
+        prev = cur_v;
+        i = i + 1;
+    }
+    return out;
+}
+
+// Sample autocorrelation at lag k: corr(xᵢ, xᵢ₊ₖ), using the full-series mean and
+// variance (biased estimator, denominator n). 0.0 if lag < 0, lag >= n, or variance ~ 0.
+// WCET = n × 16 cycles.
+#[bounded_stack(bytes = 256)]
+fn autocorrelation(xs: ref Vec<f64>, lag: i64) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if lag < 0 || lag >= n { return 0.0; }
+    let m: f64 = mean(xs);
+    let denom: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let d: f64 = xs[i] - m;
+        denom = denom + d * d;
+        i = i + 1;
+    }
+    if denom < 1.0e-15 { return 0.0; }
+    let num: f64 = 0.0;
+    let k: i64 = 0;
+    while k < n - lag {
+        num = num + (xs[k] - m) * (xs[k + lag] - m);
+        k = k + 1;
+    }
+    return num / denom;
+}
+
+// ACF for lags 0..max_lag inclusive; returns a Vec of length max_lag+1 (acf[0] = 1.0).
+// WCET = max_lag × n × 16 cycles.
+#[bounded_stack(bytes = 368)]
+fn acf_vec(xs: ref Vec<f64>, max_lag: i64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let lag: i64 = 0;
+    while lag <= max_lag {
+        push(mut ref out, autocorrelation(xs, lag));
+        lag = lag + 1;
+    }
+    return out;
+}
+
+// First difference: yᵢ = xᵢ₊₁ − xᵢ. Returns a Vec of length n−1 (empty if n < 2).
+// WCET = n × 8 cycles.
+#[bounded_stack(bytes = 136)]
+fn diff_series(xs: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    if n < 2 { return out; }
+    let i: i64 = 0;
+    while i < n - 1 {
+        push(mut ref out, xs[i + 1] - xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Cumulative sum; returns a Vec the same length as xs. WCET = n × 8 cycles.
+#[bounded_stack(bytes = 128)]
+fn cumsum(xs: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        s = s + xs[i];
+        push(mut ref out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── Online / streaming statistics (Welford's algorithm) ─────────────────────────
+// Stateless helpers: the caller keeps a running (mean, M2, count) across stream events.
+
+// Updated running mean after observing a new value x (count is the count INCLUDING x).
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 28)]
+fn welford_mean_update(old_mean: f64, count: i64, x: f64) -> f64 {
+    if count < 1 { return old_mean; }
+    return old_mean + (x - old_mean) / (count as f64);
+}
+
+// Updated M2 (sum of squared deviations from the mean) given the mean before and after
+// this update. Call welford_mean_update() first to get new_mean, then this.
+#[bounded_stack(bytes = 72)]
+#[wcet(cycles = 18)]
+fn welford_m2_update(old_m2: f64, old_mean: f64, new_mean: f64, x: f64) -> f64 {
+    return old_m2 + (x - old_mean) * (x - new_mean);
+}
+
+// Bessel-corrected variance from accumulated M2 and count. 0.0 if count < 2.
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 25)]
+fn welford_variance(m2: f64, count: i64) -> f64 {
+    if count < 2 { return 0.0; }
+    return m2 / ((count - 1) as f64);
+}
+
+// ── Extended regression and variance tests ──────────────────────────────────────
+
+// F-statistic for the ratio of two sample variances: var(xs) / var(ys). Guards var(ys) > 0.
+// WCET = 4n × 16 cycles.
+#[bounded_stack(bytes = 280)]
+fn f_stat(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let vy: f64 = variance(ys);
+    if vy < 1.0e-15 { return 0.0; }
+    return variance(xs) / vy;
+}
+
+// Pooled sample variance for an equal-variance two-sample t-test:
+// ((nx−1)vx + (ny−1)vy) / (nx+ny−2). WCET = 4n × 16 cycles.
+#[bounded_stack(bytes = 320)]
+fn pooled_variance(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let nx: i64 = len(xs) as i64;
+    let ny: i64 = len(ys) as i64;
+    if nx < 2 || ny < 2 { return 0.0; }
+    let vx: f64 = variance(xs);
+    let vy: f64 = variance(ys);
+    let denom: f64 = (nx + ny - 2) as f64;
+    if denom < 1.0e-15 { return 0.0; }
+    return (((nx - 1) as f64) * vx + ((ny - 1) as f64) * vy) / denom;
+}
+
+// Satterthwaite-Welch degrees of freedom for the Welch t-test:
+// (vx/nx + vy/ny)² / ((vx/nx)²/(nx−1) + (vy/ny)²/(ny−1)). WCET = 4n × 16 cycles.
+#[bounded_stack(bytes = 336)]
+fn welch_df(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let nx: i64 = len(xs) as i64;
+    let ny: i64 = len(ys) as i64;
+    if nx < 2 || ny < 2 { return 0.0; }
+    let vx: f64 = variance(xs);
+    let vy: f64 = variance(ys);
+    let a: f64 = vx / (nx as f64);
+    let b: f64 = vy / (ny as f64);
+    let denom: f64 = (a * a) / ((nx - 1) as f64) + (b * b) / ((ny - 1) as f64);
+    if denom < 1.0e-15 { return 0.0; }
+    return (a + b) * (a + b) / denom;
+}
+
+// Z-score standardization: returns a Vec of (xᵢ−mean)/std_dev. Empty Vec if std_dev ~ 0.
+// WCET = 3n × 16 cycles.
+#[bounded_stack(bytes = 408)]
+fn standardize(xs: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let out: Vec<f64> = vec();
+    let s: f64 = std_dev(xs);
+    if s < 1.0e-15 { return out; }
+    let m: f64 = mean(xs);
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, (xs[i] - m) / s);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Discrete mutual information I(X;Y) = Σᵢⱼ p(x,y) log(p(x,y)/(p(x)p(y))) [nats].
+// ps_xy is row-major flat nx×ny joint distribution; ps_x length nx, ps_y length ny.
+// WCET = nx×ny × 20 cycles.
+#[bounded_stack(bytes = 144)]
+fn mutual_information_discrete(ps_xy: ref Vec<f64>, ps_x: ref Vec<f64>, ps_y: ref Vec<f64>, nx: i64, ny: i64) -> f64 {
+    let s: f64 = 0.0;
+    let i: i64 = 0;
+    while i < nx {
+        let j: i64 = 0;
+        while j < ny {
+            let pxy: f64 = ps_xy[i * ny + j];
+            if pxy > 0.0 {
+                let denom: f64 = ps_x[i] * ps_y[j];
+                if denom > 0.0 { s = s + pxy * log(pxy / denom); }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+// ── Special functions (private helpers) ──────────────────────────────────────
+// Regularised incomplete gamma P(a,x) = γ(a,x)/Γ(a), and regularised incomplete
+// beta I_x(a,b), via the standard series + Lentz continued-fraction algorithms.
+// Kept private (leading `_`) per TODO.md's v0.3.0 plan: extract to a shared
+// vani-special repo only if a second consumer (e.g. vani-calculus) appears.
+
+// Series expansion for the regularised incomplete gamma P(a,x), valid for x <= a+1.
+// WCET ≈ 200 × 20 cycles (iteration cap).
+#[bounded_stack(bytes = 128)]
+fn _gamma_reg_series(a: f64, x: f64) -> f64 {
+    let gln: f64 = f64_lgamma(a);
+    let ap: f64 = a;
+    let sum: f64 = 1.0 / a;
+    let del: f64 = sum;
+    let n: i64 = 0;
+    while n < 200 {
+        ap = ap + 1.0;
+        del = del * x / ap;
+        sum = sum + del;
+        if abs(del) < abs(sum) * 1.0e-14 { break; }
+        n = n + 1;
+    }
+    return sum * exp(0.0 - x + a * log(x) - gln);
+}
+
+// Lentz continued fraction for the regularised incomplete gamma's complement
+// Q(a,x) = 1 - P(a,x), valid for x > a+1. WCET ≈ 200 × 24 cycles.
+#[bounded_stack(bytes = 200)]
+fn _gamma_reg_cf(a: f64, x: f64) -> f64 {
+    let gln: f64 = f64_lgamma(a);
+    let fpmin: f64 = 1.0e-300;
+    let b: f64 = x + 1.0 - a;
+    let c: f64 = 1.0 / fpmin;
+    let d: f64 = 1.0 / b;
+    let h: f64 = d;
+    let i: i64 = 1;
+    while i < 200 {
+        let fi: f64 = i as f64;
+        let an: f64 = 0.0 - fi * (fi - a);
+        b = b + 2.0;
+        d = an * d + b;
+        if abs(d) < fpmin { d = fpmin; }
+        c = b + an / c;
+        if abs(c) < fpmin { c = fpmin; }
+        d = 1.0 / d;
+        let delta: f64 = d * c;
+        h = h * delta;
+        if abs(delta - 1.0) < 1.0e-14 { break; }
+        i = i + 1;
+    }
+    return exp(0.0 - x + a * log(x) - gln) * h;
+}
+
+// Regularised incomplete gamma P(a,x) = γ(a,x)/Γ(a); routes to series or
+// continued fraction depending on x. Guards x<=0 -> 0, a<=0 -> 0. NO
+// #[wcet]: routes to _gamma_reg_series/_gamma_reg_cf, both unbounded to
+// the checker (a `while n < 200` loop -- literal-bounded in practice, but
+// only `for` loops with const bounds get that treatment, same situation
+// as vani-algebra's algebra_cubic_roots_real).
+#[bounded_stack(bytes = 264)]
+fn _gamma_reg(a: f64, x: f64) -> f64 {
+    if x <= 0.0 || a <= 0.0 { return 0.0; }
+    if x < a + 1.0 {
+        return _gamma_reg_series(a, x);
+    } else {
+        return 1.0 - _gamma_reg_cf(a, x);
+    }
+}
+
+// Chi-squared CDF with k degrees of freedom: P(k/2, x/2). NO #[wcet]:
+// calls _gamma_reg, unbounded to the checker.
+#[bounded_stack(bytes = 320)]
+fn chi_squared_cdf(k: f64, x: f64) -> f64 {
+    return _gamma_reg(k / 2.0, x / 2.0);
+}
+
+// Gamma CDF with shape and rate parameters: P(shape, rate×x). NO #[wcet]:
+// calls _gamma_reg, unbounded to the checker.
+#[bounded_stack(bytes = 328)]
+fn gamma_cdf(shape: f64, rate: f64, x: f64) -> f64 {
+    return _gamma_reg(shape, rate * x);
+}
+
+// Exponential CDF, exact closed form -- identical to exponential_cdf, listed
+// separately in the v0.3.0 catalog as the "exact" companion to the
+// regularised-incomplete-gamma-based CDFs above.
+#[bounded_stack(bytes = 120)]
+#[wcet(cycles = 69)]
+fn exponential_cdf_exact(lambda: f64, x: f64) -> f64 {
+    return exponential_cdf(lambda, x);
+}
+
+// Lentz continued fraction for the regularised incomplete beta function
+// (the piece used by both branches of _beta_reg's symmetry relation).
+// WCET ≈ 200 × 28 cycles.
+#[bounded_stack(bytes = 288)]
+fn _beta_cf(a: f64, b: f64, x: f64) -> f64 {
+    let fpmin: f64 = 1.0e-300;
+    let qab: f64 = a + b;
+    let qap: f64 = a + 1.0;
+    let qam: f64 = a - 1.0;
+    let c: f64 = 1.0;
+    let d: f64 = 1.0 - qab * x / qap;
+    if abs(d) < fpmin { d = fpmin; }
+    d = 1.0 / d;
+    let h: f64 = d;
+    let m: i64 = 1;
+    while m < 200 {
+        let fm: f64 = m as f64;
+        let m2: f64 = 2.0 * fm;
+        let aa1: f64 = fm * (b - fm) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa1 * d;
+        if abs(d) < fpmin { d = fpmin; }
+        c = 1.0 + aa1 / c;
+        if abs(c) < fpmin { c = fpmin; }
+        d = 1.0 / d;
+        h = h * d * c;
+        let aa2: f64 = 0.0 - (a + fm) * (qab + fm) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa2 * d;
+        if abs(d) < fpmin { d = fpmin; }
+        c = 1.0 + aa2 / c;
+        if abs(c) < fpmin { c = fpmin; }
+        d = 1.0 / d;
+        let delta: f64 = d * c;
+        h = h * delta;
+        if abs(delta - 1.0) < 1.0e-14 { break; }
+        m = m + 1;
+    }
+    return h;
+}
+
+// Regularised incomplete beta I_x(a,b), via continued fraction with the
+// symmetry relation I_x(a,b) = 1 - I_{1-x}(b,a) for numerical stability when
+// x is close to 1. Guards x<=0 -> 0, x>=1 -> 1. NO #[wcet]: calls
+// _beta_cf, unbounded to the checker (same `while m < 200` situation as
+// _gamma_reg_series/_gamma_reg_cf).
+#[bounded_stack(bytes = 376)]
+fn _beta_reg(a: f64, b: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    if x >= 1.0 { return 1.0; }
+    let bt: f64 = exp(f64_lgamma(a + b) - f64_lgamma(a) - f64_lgamma(b) + a * log(x) + b * log(1.0 - x));
+    if x < (a + 1.0) / (a + b + 2.0) {
+        return bt * _beta_cf(a, b, x) / a;
+    } else {
+        return 1.0 - bt * _beta_cf(b, a, 1.0 - x) / b;
+    }
+}
+
+// Student's t CDF with df degrees of freedom, via the incomplete beta relation:
+// F(t) = 1 - 0.5×I_x(df/2, 1/2) for t>=0, F(t) = 0.5×I_x(df/2, 1/2) for t<0,
+// where x = df/(df+t²). NO #[wcet]: calls _beta_reg, unbounded to the
+// checker.
+#[bounded_stack(bytes = 448)]
+fn t_cdf(df: f64, t: f64) -> f64 {
+    let x: f64 = df / (df + t * t);
+    let ib: f64 = _beta_reg(df / 2.0, 0.5, x);
+    if t >= 0.0 {
+        return 1.0 - 0.5 * ib;
+    } else {
+        return 0.5 * ib;
+    }
+}
+
+// Beta distribution CDF: I_x(alpha, beta). NO #[wcet]: calls _beta_reg,
+// unbounded to the checker.
+#[bounded_stack(bytes = 440)]
+fn beta_cdf(alpha: f64, beta: f64, x: f64) -> f64 {
+    return _beta_reg(alpha, beta, x);
+}
+
+// F-distribution CDF: I_y(df1/2, df2/2) where y = df1×x / (df1×x + df2).
+// NO #[wcet]: calls _beta_reg, unbounded to the checker.
+#[bounded_stack(bytes = 456)]
+fn f_cdf(df1: f64, df2: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    let y: f64 = df1 * x / (df1 * x + df2);
+    return _beta_reg(df1 / 2.0, df2 / 2.0, y);
+}
+
+// ── p-values from test statistics ────────────────────────────────────────────
+
+// Two-tailed p-value from a t-statistic: 2 × (1 − t_cdf(df, |t|)). NO
+// #[wcet]: calls t_cdf, unbounded to the checker.
+#[bounded_stack(bytes = 504)]
+fn t_pvalue_two_tailed(t: f64, df: f64) -> f64 {
+    return 2.0 * (1.0 - t_cdf(df, abs(t)));
+}
+
+// Upper-tail p-value from a chi-squared statistic: 1 − chi_squared_cdf(df, stat).
+// NO #[wcet]: calls chi_squared_cdf, unbounded to the checker.
+#[bounded_stack(bytes = 376)]
+fn chi_squared_pvalue(stat: f64, df: f64) -> f64 {
+    return 1.0 - chi_squared_cdf(df, stat);
+}
+
+// Two-tailed p-value from a z-statistic, using the compiler's normal CDF builtin.
+#[bounded_stack(bytes = 48)]
+#[wcet(cycles = 24)]
+fn z_pvalue_two_tailed(z: f64) -> f64 {
+    return 2.0 * (1.0 - f64_normal_cdf(abs(z), 0.0, 1.0));
+}
+
+// Upper-tail p-value from an F-statistic: 1 − f_cdf(df1, df2, f). NO
+// #[wcet]: calls f_cdf, unbounded to the checker.
+#[bounded_stack(bytes = 520)]
+fn f_pvalue(f: f64, df1: f64, df2: f64) -> f64 {
+    return 1.0 - f_cdf(df1, df2, f);
+}
+
+// ── Multiple linear regression ──────────────────────────────────────────────
+// X_flat is row-major n_obs × n_pred (include an intercept column of 1s
+// yourself if you want one). Needs vani-matrix (mat_transpose, mat_mul_rect,
+// mat_inv_n, mat_vec_mul).
+
+// Ordinary least squares fit via the normal equations: β = (XᵀX)⁻¹ Xᵀy.
+// NO #[wcet]: dominated by mat_inv_n's O(n_pred^3) Gauss-Jordan inversion.
+#[bounded_stack(bytes = 704)]
+fn mlr_fit(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
+    let Xt: Vec<f64> = matrix::mat_transpose(X_flat, n_obs, n_pred);
+    let XtX: Vec<f64> = matrix::mat_mul_rect(ref Xt, X_flat, n_pred, n_obs, n_pred);
+    let XtX_inv: Vec<f64> = matrix::mat_inv_n(ref XtX, n_pred);
+    let Xty: Vec<f64> = matrix::mat_vec_mul(ref Xt, y, n_pred, n_obs);
+    let beta: Vec<f64> = matrix::mat_vec_mul(ref XtX_inv, ref Xty, n_pred, n_pred);
+    return beta;
+}
+
+// Predicted values: y-hat = X beta. NO #[wcet]: mat_vec_mul's
+// O(n_obs*n_pred).
+#[bounded_stack(bytes = 248)]
+fn mlr_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
+    return matrix::mat_vec_mul(X_flat, beta, n_obs, n_pred);
+}
+
+// Residuals: r = y - y_hat. WCET = 20 + n * ~10 cycles.
+#[bounded_stack(bytes = 120)]
+fn mlr_residuals(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(y) as i64;
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, y[i] - y_hat[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Coefficient of determination: 1 - SS_res/SS_tot. WCET: call mean
+// (O(n)) + an O(n) loop -- O(n).
+#[bounded_stack(bytes = 240)]
+fn mlr_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> f64 {
+    let n: i64 = len(y) as i64;
+    let m: f64 = mean(y);
+    let ss_res: f64 = 0.0;
+    let ss_tot: f64 = 0.0;
+    let i: i64 = 0;
+    while i < n {
+        let r: f64 = y[i] - y_hat[i];
+        ss_res = ss_res + r * r;
+        let d: f64 = y[i] - m;
+        ss_tot = ss_tot + d * d;
+        i = i + 1;
+    }
+    if ss_tot < 1.0e-15 { return 0.0; }
+    return 1.0 - ss_res / ss_tot;
+}
+
+// Adjusted R-squared: penalises adding predictors that don't improve fit.
+// NO #[wcet]: calls mlr_r_squared -- O(n).
+#[bounded_stack(bytes = 336)]
+fn mlr_adj_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>, n_pred: i64) -> f64 {
+    let n: i64 = len(y) as i64;
+    let r2: f64 = mlr_r_squared(y, y_hat);
+    let denom: f64 = (n - n_pred - 1) as f64;
+    if denom < 1.0e-9 { return r2; }
+    return 1.0 - (1.0 - r2) * ((n - 1) as f64) / denom;
+}
+
+// ── Covariance matrix ────────────────────────────────────────────────────────
+
+// Sample covariance matrix of X_flat (row-major n_obs x n_vars), two-pass.
+// Returns a flat n_vars x n_vars matrix. WCET: means pass O(n_vars*n_obs)
+// + covariance pass O(n_vars^2*n_obs) -- O(n_vars^2*n_obs).
+#[bounded_stack(bytes = 264)]
+fn cov_matrix(X_flat: ref Vec<f64>, n_obs: i64, n_vars: i64) -> Vec<f64> {
+    let means: Vec<f64> = vec();
+    let v: i64 = 0;
+    while v < n_vars {
+        let s: f64 = 0.0;
+        let i: i64 = 0;
+        while i < n_obs {
+            s = s + X_flat[i * n_vars + v];
+            i = i + 1;
+        }
+        push(mut ref means, s / (n_obs as f64));
+        v = v + 1;
+    }
+    let out: Vec<f64> = vec();
+    let a: i64 = 0;
+    while a < n_vars {
+        let b: i64 = 0;
+        while b < n_vars {
+            let s2: f64 = 0.0;
+            let i2: i64 = 0;
+            while i2 < n_obs {
+                s2 = s2 + (X_flat[i2 * n_vars + a] - means[a]) * (X_flat[i2 * n_vars + b] - means[b]);
+                i2 = i2 + 1;
+            }
+            let denom: f64 = (n_obs - 1) as f64;
+            let cv: f64 = 0.0;
+            if denom > 0.0 { cv = s2 / denom; }
+            push(mut ref out, cv);
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return out;
+}
+
+// Correlation matrix: cov_matrix standardised by the row/column standard deviations.
+// NO #[wcet]: dominated by cov_matrix's O(n_vars^2*n_obs).
+#[bounded_stack(bytes = 488)]
+fn correlation_matrix(X_flat: ref Vec<f64>, n_obs: i64, n_vars: i64) -> Vec<f64> {
+    let cov: Vec<f64> = cov_matrix(X_flat, n_obs, n_vars);
+    let stds: Vec<f64> = vec();
+    let v: i64 = 0;
+    while v < n_vars {
+        push(mut ref stds, sqrt(cov[v * n_vars + v]));
+        v = v + 1;
+    }
+    let out: Vec<f64> = vec();
+    let a: i64 = 0;
+    while a < n_vars {
+        let b: i64 = 0;
+        while b < n_vars {
+            let denom: f64 = stds[a] * stds[b];
+            let cv: f64 = 0.0;
+            if denom > 1.0e-15 { cv = cov[a * n_vars + b] / denom; }
+            push(mut ref out, cv);
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return out;
+}
+
+// ── Dimensionality reduction ─────────────────────────────────────────────────
+
+// Dominant eigenvector of a symmetric matrix (e.g. a covariance matrix) via
+// power iteration from a uniform start. Returns a unit vector; converges early
+// once successive iterates move less than tol. WCET = 20 + n (init) +
+// max_iter * (mat_vec_mul's O(n^2) + O(n) work) -- O(max_iter * n^2).
+#[bounded_stack(bytes = 432)]
+fn pca_power_iter(cov_flat: ref Vec<f64>, n: i64, max_iter: i64, tol: f64) -> Vec<f64> {
+    let v: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref v, 1.0 / sqrt(n as f64));
+        i = i + 1;
+    }
+    let iter: i64 = 0;
+    while iter < max_iter {
+        let w: Vec<f64> = matrix::mat_vec_mul(cov_flat, ref v, n, n);
+        let norm: f64 = matrix::vec_norm2(ref w, n);
+        if norm < 1.0e-15 { return v; }
+        let j: i64 = 0;
+        let diff: f64 = 0.0;
+        while j < n {
+            let nv: f64 = w[j] / norm;
+            let d: f64 = nv - v[j];
+            diff = diff + d * d;
+            set(mut ref v, j, nv);
+            j = j + 1;
+        }
+        if sqrt(diff) < tol { return v; }
+        iter = iter + 1;
+    }
+    return v;
+}
+
+// Deflate a covariance matrix by removing the variance already explained by
+// pc1 (a unit eigenvector): cov' = cov - lambda * v v^T, where lambda = v^T cov v
+// is the Rayleigh-quotient eigenvalue estimate. Run pca_power_iter again on the
+// result to get the second principal component. WCET: mat_vec_mul's
+// O(n^2) + vec_outer's O(n^2) + an O(n^2) loop -- O(n^2).
+#[bounded_stack(bytes = 440)]
+fn pca_deflate(cov_flat: ref Vec<f64>, n: i64, pc1: ref Vec<f64>) -> Vec<f64> {
+    let cv: Vec<f64> = matrix::mat_vec_mul(cov_flat, pc1, n, n);
+    let lambda: f64 = matrix::dot_n(ref cv, pc1, n);
+    let outer: Vec<f64> = matrix::vec_outer(pc1, pc1, n, n);
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n * n {
+        push(mut ref out, cov_flat[i] - lambda * outer[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── Stochastic processes ─────────────────────────────────────────────────────
+
+// 1D discrete random walk: position[0] = 0, position[i] = position[i-1] + N(0,sigma).
+// Returns a Vec of exactly n_steps positions. WCET = 20 + n_steps *
+// ~15 cycles.
+#[bounded_stack(bytes = 128)]
+fn random_walk_1d(n_steps: i64, sigma: f64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let pos: f64 = 0.0;
+    push(mut ref out, pos);
+    let i: i64 = 1;
+    while i < n_steps {
+        pos = pos + sigma * rand_normal();
+        push(mut ref out, pos);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Geometric Brownian motion path via Euler-Maruyama: S += mu*S*dt + sigma*S*sqrt(dt)*Z.
+// Returns a Vec of exactly n_steps prices starting at s0. WCET = 20 +
+// n_steps * ~15 cycles.
+#[bounded_stack(bytes = 168)]
+fn geometric_brownian(s0: f64, mu: f64, sigma: f64, dt: f64, n_steps: i64) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let s: f64 = s0;
+    push(mut ref out, s);
+    let sqrt_dt: f64 = sqrt(dt);
+    let i: i64 = 1;
+    while i < n_steps {
+        let z: f64 = rand_normal();
+        s = s + mu * s * dt + sigma * s * sqrt_dt * z;
+        push(mut ref out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Kalman filter predict step for n-dimensional state x, covariance P (n x n),
+// state-transition F (n x n), process noise Q (n x n). Returns a packed Vec:
+// elements [0..n) are the predicted state, [n..n+n^2) are the predicted
+// covariance (row-major). WCET: mat_vec_mul (O(n^2)) + 2 * mat_mul
+// (O(n^3) each) -- O(n^3).
+#[bounded_stack(bytes = 536)]
+fn kalman_predict(x: ref Vec<f64>, P: ref Vec<f64>, F: ref Vec<f64>, Q: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let x_pred: Vec<f64> = matrix::mat_vec_mul(F, x, n, n);
+    let FP: Vec<f64> = matrix::mat_mul(F, P, n);
+    let Ft: Vec<f64> = matrix::mat_transpose(F, n, n);
+    let FPFt: Vec<f64> = matrix::mat_mul(ref FP, ref Ft, n);
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, x_pred[i]);
+        i = i + 1;
+    }
+    let j: i64 = 0;
+    while j < n * n {
+        push(mut ref out, FPFt[j] + Q[j]);
+        j = j + 1;
+    }
+    return out;
+}
+
+// Kalman filter update step: state x (n), covariance P (n x n), measurement z
+// (m), observation model H (m x n), measurement noise R (m x m). Returns a
+// packed Vec: elements [0..n) are the updated state, [n..n+n^2) are the
+// updated covariance (row-major). NO #[wcet]: dominated by several
+// mat_mul_rect/mat_mul/mat_inv_n calls -- O(max(n,m)^3).
+#[bounded_stack(bytes = 1064)]
+fn kalman_update(x: ref Vec<f64>, P: ref Vec<f64>, z: ref Vec<f64>, H: ref Vec<f64>, R: ref Vec<f64>, n: i64, m: i64) -> Vec<f64> {
+    let Hx: Vec<f64> = matrix::mat_vec_mul(H, x, m, n);
+    let y: Vec<f64> = vec();
+    let i0: i64 = 0;
+    while i0 < m {
+        push(mut ref y, z[i0] - Hx[i0]);
+        i0 = i0 + 1;
+    }
+    let Ht: Vec<f64> = matrix::mat_transpose(H, m, n);
+    let HP: Vec<f64> = matrix::mat_mul_rect(H, P, m, n, n);
+    let HPHt: Vec<f64> = matrix::mat_mul_rect(ref HP, ref Ht, m, n, m);
+    let S: Vec<f64> = vec();
+    let i1: i64 = 0;
+    while i1 < m * m {
+        push(mut ref S, HPHt[i1] + R[i1]);
+        i1 = i1 + 1;
+    }
+    let PHt: Vec<f64> = matrix::mat_mul_rect(P, ref Ht, n, n, m);
+    let S_inv: Vec<f64> = matrix::mat_inv_n(ref S, m);
+    let K: Vec<f64> = matrix::mat_mul_rect(ref PHt, ref S_inv, n, m, m);
+    let Ky: Vec<f64> = matrix::mat_vec_mul(ref K, ref y, n, m);
+    let x_new: Vec<f64> = vec();
+    let i2: i64 = 0;
+    while i2 < n {
+        push(mut ref x_new, x[i2] + Ky[i2]);
+        i2 = i2 + 1;
+    }
+    let KH: Vec<f64> = matrix::mat_mul_rect(ref K, H, n, m, n);
+    let KHP: Vec<f64> = matrix::mat_mul(ref KH, P, n);
+    let P_new: Vec<f64> = vec();
+    let i3: i64 = 0;
+    while i3 < n * n {
+        push(mut ref P_new, P[i3] - KHP[i3]);
+        i3 = i3 + 1;
+    }
+    let out: Vec<f64> = vec();
+    let i4: i64 = 0;
+    while i4 < n {
+        push(mut ref out, x_new[i4]);
+        i4 = i4 + 1;
+    }
+    let i5: i64 = 0;
+    while i5 < n * n {
+        push(mut ref out, P_new[i5]);
+        i5 = i5 + 1;
+    }
+    return out;
+}
+
+// ── Deferred (were blocked on F64-1, sort_by on Vec<f64> -- landed 2026-07-13) ───
+
+// q-th quantile via linear interpolation between sorted neighbors (R's
+// default "type 7" method). q is clamped to [0,1]. NO #[wcet]: calls
+// _sorted_copy -- O(n log n).
+#[bounded_stack(bytes = 280)]
+fn quantile(xs: ref Vec<f64>, q: f64) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    if n == 1 { return xs[0]; }
+    let sorted: Vec<f64> = _sorted_copy(xs);
+    let qq: f64 = q;
+    if qq < 0.0 { qq = 0.0; }
+    if qq > 1.0 { qq = 1.0; }
+    let idx: f64 = qq * ((n - 1) as f64);
+    let lo: i64 = idx as i64;
+    let hi: i64 = lo + 1;
+    if hi >= n { return sorted[n - 1]; }
+    let frac: f64 = idx - (lo as f64);
+    return sorted[lo] + frac * (sorted[hi] - sorted[lo]);
+}
+
+// Interquartile range: Q3 - Q1. NO #[wcet]: two quantile calls, each
+// O(n log n).
+#[bounded_stack(bytes = 328)]
+fn iqr(xs: ref Vec<f64>) -> f64 {
+    return quantile(xs, 0.75) - quantile(xs, 0.25);
+}
+
+// Most frequent value (sort + scan). Ties broken toward the smaller value.
+// NO #[wcet]: _sorted_copy's O(n log n) + an O(n) scan -- O(n log n).
+#[bounded_stack(bytes = 280)]
+fn mode(xs: ref Vec<f64>) -> f64 {
+    let n: i64 = len(xs) as i64;
+    if n == 0 { return 0.0; }
+    let sorted: Vec<f64> = _sorted_copy(xs);
+    let best_val: f64 = sorted[0];
+    let best_count: i64 = 1;
+    let cur_val: f64 = sorted[0];
+    let cur_count: i64 = 1;
+    let i: i64 = 1;
+    while i < n {
+        if abs(sorted[i] - cur_val) < 1.0e-12 {
+            cur_count = cur_count + 1;
+        } else {
+            cur_val = sorted[i];
+            cur_count = 1;
+        }
+        if cur_count > best_count {
+            best_count = cur_count;
+            best_val = cur_val;
+        }
+        i = i + 1;
+    }
+    return best_val;
+}
+
+// Fractional rank transform with tie-averaging: rank_i = (count less than x_i)
+// + (count equal to x_i, including itself, + 1) / 2. Pairwise O(n²); avoids
+// needing an index-paired sort (Vec<f64> sort_by has no way to carry a
+// parallel index array through the comparator in v1).
+#[bounded_stack(bytes = 168)]
+fn _rank_transform(xs: ref Vec<f64>) -> Vec<f64> {
+    let n: i64 = len(xs) as i64;
+    let ranks: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let less_count: i64 = 0;
+        let equal_count: i64 = 0;
+        let j: i64 = 0;
+        while j < n {
+            if xs[j] < xs[i] { less_count = less_count + 1; }
+            if abs(xs[j] - xs[i]) < 1.0e-12 { equal_count = equal_count + 1; }
+            j = j + 1;
+        }
+        let rank: f64 = (less_count as f64) + ((equal_count as f64) + 1.0) / 2.0;
+        push(mut ref ranks, rank);
+        i = i + 1;
+    }
+    return ranks;
+}
+
+// Spearman rank correlation: pearson_r of the rank-transformed samples.
+// NO #[wcet]: two _rank_transform calls, each O(n^2), dominate pearson_r's O(n).
+#[bounded_stack(bytes = 440)]
+fn spearman_r(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let rx: Vec<f64> = _rank_transform(xs);
+    let ry: Vec<f64> = _rank_transform(ys);
+    return pearson_r(ref rx, ref ry);
+}
+
+// Mann-Whitney U statistic (nonparametric two-sample test): rank the pooled
+// sample (tie-averaged), sum the ranks of group 1 (R1), then
+// U = R1 - n1(n1+1)/2. U=0 means group 1 is entirely below group 2.
+// NO #[wcet]: dominated by _rank_transform's O((nx+ny)^2).
+#[bounded_stack(bytes = 360)]
+fn mann_whitney_u_stat(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let nx: i64 = len(xs) as i64;
+    let ny: i64 = len(ys) as i64;
+    let combined: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < nx {
+        push(mut ref combined, xs[i]);
+        i = i + 1;
+    }
+    let j: i64 = 0;
+    while j < ny {
+        push(mut ref combined, ys[j]);
+        j = j + 1;
+    }
+    let ranks: Vec<f64> = _rank_transform(ref combined);
+    let r1: f64 = 0.0;
+    let k: i64 = 0;
+    while k < nx {
+        r1 = r1 + ranks[k];
+        k = k + 1;
+    }
+    let n1f: f64 = nx as f64;
+    return r1 - n1f * (n1f + 1.0) / 2.0;
+}
+
+// Kolmogorov-Smirnov statistic (nonparametric two-sample test): the maximum
+// absolute gap between the two samples' empirical CDFs, evaluated at every
+// point in the pooled sample (where a step function can only change).
+// D=0 means identical distributions; D=1 means fully separated samples.
+// NO #[wcet]: outer loop over the n_total pooled points, each doing an
+// O(nx+ny) scan to count -- O((nx+ny)^2).
+#[bounded_stack(bytes = 272)]
+fn kolmogorov_smirnov_stat(xs: ref Vec<f64>, ys: ref Vec<f64>) -> f64 {
+    let nx: i64 = len(xs) as i64;
+    let ny: i64 = len(ys) as i64;
+    if nx == 0 || ny == 0 { return 0.0; }
+    let combined: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < nx {
+        push(mut ref combined, xs[i]);
+        i = i + 1;
+    }
+    let j: i64 = 0;
+    while j < ny {
+        push(mut ref combined, ys[j]);
+        j = j + 1;
+    }
+    let n_total: i64 = nx + ny;
+    let max_d: f64 = 0.0;
+    let k: i64 = 0;
+    while k < n_total {
+        let t: f64 = combined[k];
+        let cx: i64 = 0;
+        let m: i64 = 0;
+        while m < nx {
+            if xs[m] <= t { cx = cx + 1; }
+            m = m + 1;
+        }
+        let cy: i64 = 0;
+        let p: i64 = 0;
+        while p < ny {
+            if ys[p] <= t { cy = cy + 1; }
+            p = p + 1;
+        }
+        let f1: f64 = (cx as f64) / (nx as f64);
+        let f2: f64 = (cy as f64) / (ny as f64);
+        let d: f64 = abs(f1 - f2);
+        if d > max_d { max_d = d; }
+        k = k + 1;
+    }
+    return max_d;
+}

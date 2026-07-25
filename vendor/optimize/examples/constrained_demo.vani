@@ -1,0 +1,45 @@
+// Demonstrates the two constrained-optimization tools in this package:
+// the penalty method for smooth nonlinear constraints, and the tableau
+// simplex method for linear programs.
+//
+// Run with:  vanic run examples/constrained_demo.vani
+
+use "../src/lib.vani";
+
+// Constraint g(x) = 1 - x - y <= 0  (i.e. x + y >= 1).
+#[bounded_stack(bytes = 56)]
+fn constraint_sum_ge_1(x: ref Vec<f64>, n: i64) -> f64 {
+    return 1.0 - x[0] - x[1];
+}
+
+fn main() -> i64 {
+    print "Minimize x^2+y^2 subject to x+y >= 1.";
+    print "Exact solution (Lagrange multipliers): (0.5, 0.5), f = 0.5.";
+    let x0: Vec<f64> = vec(0.0);
+    push(mut ref x0, 0.0);
+    let xmin: Vec<f64> = penalty_method_minimize(sphere_fn, constraint_sum_ge_1, ref x0, 2, 1.0, 10.0, 8, 200, 1.0e-5);
+    print xmin[0];
+    print xmin[1];
+    print sphere_fn(ref xmin, 2);
+    print "";
+
+    print "Wyndor Glass Co. LP: maximize 3x+5y s.t. x<=4, 2y<=12, 3x+2y<=18.";
+    print "Known optimum: x=2, y=6, objective=36.";
+    let c: Vec<f64> = vec(3.0);
+    push(mut ref c, 5.0);
+    let A: Vec<f64> = vec(1.0);
+    push(mut ref A, 0.0);
+    push(mut ref A, 0.0);
+    push(mut ref A, 2.0);
+    push(mut ref A, 3.0);
+    push(mut ref A, 2.0);
+    let b: Vec<f64> = vec(4.0);
+    push(mut ref b, 12.0);
+    push(mut ref b, 18.0);
+    let xlp: Vec<f64> = simplex_solve(ref c, ref A, ref b, 2, 3);
+    print xlp[0];
+    print xlp[1];
+    print simplex_value(ref c, ref xlp, 2);
+
+    return 0;
+}

@@ -1,0 +1,182 @@
+use "../src/lib.vani";
+
+fn xs5() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 5.0);
+    return v;
+}
+
+fn xs10() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 5.0);
+    push(mut ref v, 6.0);
+    push(mut ref v, 7.0);
+    push(mut ref v, 8.0);
+    push(mut ref v, 9.0);
+    push(mut ref v, 10.0);
+    return v;
+}
+
+// median still matches the old insertion-sort implementation's results
+// after the sort_by rewrite (F64-1 landed).
+#[test]
+fn test_median_odd_unchanged() -> i64 {
+    let xs: Vec<f64> = vec(3.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 4.0);
+    push(mut ref xs, 1.0);
+    push(mut ref xs, 5.0);
+    push(mut ref xs, 9.0);
+    push(mut ref xs, 2.0);
+    assert abs(median(ref xs) - 3.0) < 1.0e-12;
+    return 0;
+}
+
+#[test]
+fn test_median_even_unchanged() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let xs4: Vec<f64> = vec(1.0);
+    push(mut ref xs4, 2.0);
+    push(mut ref xs4, 3.0);
+    push(mut ref xs4, 4.0);
+    assert abs(median(ref xs4) - 2.5) < 1.0e-12;
+    return 0;
+}
+
+// quantile(0.5) matches median for both odd and even n.
+#[test]
+fn test_quantile_matches_median() -> i64 {
+    let xs: Vec<f64> = xs5();
+    assert abs(quantile(ref xs, 0.5) - median(ref xs)) < 1.0e-12;
+    return 0;
+}
+
+// quantile(0,q,1) on [1..10]: Q1=3.25, Q3=7.75 (R type-7, hand-verified).
+#[test]
+fn test_quantile_quartiles() -> i64 {
+    let xs: Vec<f64> = xs10();
+    assert abs(quantile(ref xs, 0.25) - 3.25) < 1.0e-12;
+    assert abs(quantile(ref xs, 0.75) - 7.75) < 1.0e-12;
+    return 0;
+}
+
+// quantile clamps q outside [0,1].
+#[test]
+fn test_quantile_clamps_q() -> i64 {
+    let xs: Vec<f64> = xs5();
+    assert abs(quantile(ref xs, 0.0 - 1.0) - 1.0) < 1.0e-12;
+    assert abs(quantile(ref xs, 2.0) - 5.0) < 1.0e-12;
+    return 0;
+}
+
+// iqr([1..10]) = 7.75 - 3.25 = 4.5.
+#[test]
+fn test_iqr_basic() -> i64 {
+    let xs: Vec<f64> = xs10();
+    assert abs(iqr(ref xs) - 4.5) < 1.0e-12;
+    return 0;
+}
+
+// mode([1,2,2,3,3,3,4]) = 3 (appears 3 times).
+#[test]
+fn test_mode_basic() -> i64 {
+    let xs: Vec<f64> = vec(1.0);
+    push(mut ref xs, 2.0);
+    push(mut ref xs, 2.0);
+    push(mut ref xs, 3.0);
+    push(mut ref xs, 3.0);
+    push(mut ref xs, 3.0);
+    push(mut ref xs, 4.0);
+    assert abs(mode(ref xs) - 3.0) < 1.0e-12;
+    return 0;
+}
+
+// mode of all-distinct values returns the smallest (first encountered in
+// sorted order with count 1, never beaten).
+#[test]
+fn test_mode_all_distinct_returns_min() -> i64 {
+    let xs: Vec<f64> = xs5();
+    assert abs(mode(ref xs) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+// spearman_r of a perfectly monotonic (but nonlinear) relationship is 1.0 --
+// this is what distinguishes it from pearson_r, which would be < 1 for a
+// nonlinear relationship.
+#[test]
+fn test_spearman_r_perfect_monotonic() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let ys: Vec<f64> = vec(1.0);
+    push(mut ref ys, 4.0);
+    push(mut ref ys, 9.0);
+    push(mut ref ys, 16.0);
+    push(mut ref ys, 25.0);
+    assert abs(spearman_r(ref xs, ref ys) - 1.0) < 1.0e-9;
+    assert pearson_r(ref xs, ref ys) < 0.99;
+    return 0;
+}
+
+// spearman_r of a perfectly inverse relationship is -1.0.
+#[test]
+fn test_spearman_r_perfect_inverse() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let ys: Vec<f64> = vec(5.0);
+    push(mut ref ys, 4.0);
+    push(mut ref ys, 3.0);
+    push(mut ref ys, 2.0);
+    push(mut ref ys, 1.0);
+    assert abs(spearman_r(ref xs, ref ys) - (0.0 - 1.0)) < 1.0e-9;
+    return 0;
+}
+
+// mann_whitney_u_stat: fully separated groups (all of xs < all of ys) gives U=0.
+#[test]
+fn test_mann_whitney_fully_separated() -> i64 {
+    let low: Vec<f64> = vec(1.0);
+    push(mut ref low, 2.0);
+    push(mut ref low, 3.0);
+    let high: Vec<f64> = vec(10.0);
+    push(mut ref high, 11.0);
+    push(mut ref high, 12.0);
+    assert abs(mann_whitney_u_stat(ref low, ref high) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// mann_whitney_u_stat: reversing which group is "first" gives the complementary U.
+#[test]
+fn test_mann_whitney_complementary() -> i64 {
+    let low: Vec<f64> = vec(1.0);
+    push(mut ref low, 2.0);
+    push(mut ref low, 3.0);
+    let high: Vec<f64> = vec(10.0);
+    push(mut ref high, 11.0);
+    push(mut ref high, 12.0);
+    let u1: f64 = mann_whitney_u_stat(ref low, ref high);
+    let u2: f64 = mann_whitney_u_stat(ref high, ref low);
+    // U1 + U2 = n1*n2 for any two-sample split.
+    assert abs(u1 + u2 - 9.0) < 1.0e-12;
+    return 0;
+}
+
+// kolmogorov_smirnov_stat: fully separated samples give D=1 (complete
+// separation); identical samples give D=0.
+#[test]
+fn test_ks_stat_separated_and_identical() -> i64 {
+    let low: Vec<f64> = vec(1.0);
+    push(mut ref low, 2.0);
+    push(mut ref low, 3.0);
+    let high: Vec<f64> = vec(10.0);
+    push(mut ref high, 11.0);
+    push(mut ref high, 12.0);
+    assert abs(kolmogorov_smirnov_stat(ref low, ref high) - 1.0) < 1.0e-12;
+    assert abs(kolmogorov_smirnov_stat(ref low, ref low) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

@@ -1,0 +1,110 @@
+use "../src/lib.vani";
+
+fn make_xs() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    return v;
+}
+
+fn make_ys_double() -> Vec<f64> {
+    let v: Vec<f64> = vec(2.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 6.0);
+    return v;
+}
+
+fn make_ys_neg() -> Vec<f64> {
+    let v: Vec<f64> = vec(6.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 2.0);
+    return v;
+}
+
+// covariance([1,2,3], [2,4,6]) = 2.0  (cov = slope * var_x = 2 * 1)
+#[test]
+fn test_covariance_perfect() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_double();
+    assert abs(covariance(ref xs, ref ys) - 2.0) < 1.0e-12;
+    return 0;
+}
+
+// covariance([1,2,3], [6,4,2]) = -2.0  (anti-correlated)
+#[test]
+fn test_covariance_neg() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_neg();
+    assert abs(covariance(ref xs, ref ys) - (0.0 - 2.0)) < 1.0e-12;
+    return 0;
+}
+
+// pearson_r([1,2,3], [2,4,6]) = 1.0
+#[test]
+fn test_pearson_r_perfect() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_double();
+    assert abs(pearson_r(ref xs, ref ys) - 1.0) < 1.0e-10;
+    return 0;
+}
+
+// pearson_r([1,2,3], [6,4,2]) = -1.0
+#[test]
+fn test_pearson_r_neg() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_neg();
+    assert abs(pearson_r(ref xs, ref ys) - (0.0 - 1.0)) < 1.0e-10;
+    return 0;
+}
+
+// ols_slope([1,2,3], [2,4,6]) = 2.0
+#[test]
+fn test_ols_slope() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_double();
+    assert abs(ols_slope(ref xs, ref ys) - 2.0) < 1.0e-12;
+    return 0;
+}
+
+// ols_intercept([1,2,3], [2,4,6]) = 0.0  (y = 2x + 0)
+#[test]
+fn test_ols_intercept_zero() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_double();
+    assert abs(ols_intercept(ref xs, ref ys)) < 1.0e-10;
+    return 0;
+}
+
+// ols_intercept with offset: [1,2,3] vs [5,7,9] → y = 2x + 3
+#[test]
+fn test_ols_intercept_offset() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = vec(5.0);
+    push(mut ref ys, 7.0);
+    push(mut ref ys, 9.0);
+    assert abs(ols_slope(ref xs, ref ys) - 2.0) < 1.0e-12;
+    assert abs(ols_intercept(ref xs, ref ys) - 3.0) < 1.0e-10;
+    return 0;
+}
+
+// ols_r_squared of perfect fit = 1.0
+#[test]
+fn test_ols_r_squared_perfect() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = make_ys_double();
+    assert abs(ols_r_squared(ref xs, ref ys) - 1.0) < 1.0e-10;
+    return 0;
+}
+
+// ols_r_squared of constant y = 0.0 (no linear relationship)
+#[test]
+fn test_ols_r_squared_zero() -> i64 {
+    let xs: Vec<f64> = make_xs();
+    let ys: Vec<f64> = vec(3.0);
+    push(mut ref ys, 3.0);
+    push(mut ref ys, 3.0);
+    assert abs(ols_r_squared(ref xs, ref ys)) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

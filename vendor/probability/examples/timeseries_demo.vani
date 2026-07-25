@@ -1,0 +1,79 @@
+// Time series demo: moving average, EMA, and autocorrelation on a synthetic signal.
+//
+// Run with:  vanic run examples/timeseries_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // A noisy-looking but periodic signal: 10, 12, 9, 15, 11, 13, 8, 16, 10, 14.
+    let xs: Vec<f64> = vec(10.0);
+    push(mut ref xs, 12.0);
+    push(mut ref xs, 9.0);
+    push(mut ref xs, 15.0);
+    push(mut ref xs, 11.0);
+    push(mut ref xs, 13.0);
+    push(mut ref xs, 8.0);
+    push(mut ref xs, 16.0);
+    push(mut ref xs, 10.0);
+    push(mut ref xs, 14.0);
+
+    print "=== Synthetic signal ===";
+    let n: i64 = len(xs) as i64;
+    let i: i64 = 0;
+    while i < n {
+        print "x[", i, "] =", xs[i];
+        i = i + 1;
+    }
+
+    print "";
+    print "=== Moving average (window=3) ===";
+    let ma: Vec<f64> = moving_average(ref xs, 3);
+    let j: i64 = 0;
+    while j < len(ma) as i64 {
+        print "ma[", j, "] =", ma[j];
+        j = j + 1;
+    }
+
+    print "";
+    print "=== Exponential moving average (alpha=0.3) ===";
+    let e: Vec<f64> = ema(ref xs, 0.3);
+    let k: i64 = 0;
+    while k < len(e) as i64 {
+        print "ema[", k, "] =", e[k];
+        k = k + 1;
+    }
+
+    print "";
+    print "=== Autocorrelation function, lags 0..4 ===";
+    let acf: Vec<f64> = acf_vec(ref xs, 4);
+    let l: i64 = 0;
+    while l < len(acf) as i64 {
+        print "acf[lag=", l, "] =", acf[l];
+        l = l + 1;
+    }
+
+    print "";
+    print "=== First difference and cumulative sum ===";
+    let d: Vec<f64> = diff_series(ref xs);
+    print "diff_series length:", len(d), "(one shorter than the input)";
+    let c: Vec<f64> = cumsum(ref xs);
+    print "cumsum[last] =", c[(len(c) as i64) - 1], " (should equal the sum of all x)";
+
+    print "";
+    print "=== Welford online mean/variance (streaming, one point at a time) ===";
+    let running_mean: f64 = 0.0;
+    let m2: f64 = 0.0;
+    let count: i64 = 0;
+    let m: i64 = 0;
+    while m < n {
+        count = count + 1;
+        let new_mean: f64 = welford_mean_update(running_mean, count, xs[m]);
+        m2 = welford_m2_update(m2, running_mean, new_mean, xs[m]);
+        running_mean = new_mean;
+        m = m + 1;
+    }
+    print "Streaming mean    =", running_mean, " (batch mean() =", mean(ref xs), ")";
+    print "Streaming variance=", welford_variance(m2, count), " (batch variance() =", variance(ref xs), ")";
+
+    return 0;
+}

@@ -1,0 +1,73 @@
+// Probability distributions demo: PMFs, PDFs, CDFs, and information theory.
+//
+// Run with:  vanic run examples/distributions_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    print "=== Binomial(n=10, p=0.5) ===";
+    let k: i64 = 0;
+    while k <= 10 {
+        print "P(X=", k, ") =", binomial_pmf(10, k, 0.5);
+        k = k + 1;
+    }
+    print "P(X<=5) =", binomial_cdf(10, 5, 0.5);
+
+    print "";
+    print "=== Poisson(λ=3.0) ===";
+    let j: i64 = 0;
+    while j <= 8 {
+        print "P(X=", j, ") =", poisson_pmf(3.0, j);
+        j = j + 1;
+    }
+    print "P(X<=5) =", poisson_cdf(3.0, 5);
+
+    print "";
+    print "=== Geometric(p=0.3) — trials until first success ===";
+    let g: i64 = 1;
+    while g <= 6 {
+        print "P(X=", g, ") =", geometric_pmf(0.3, g), "  CDF:", geometric_cdf(0.3, g);
+        g = g + 1;
+    }
+
+    print "";
+    print "=== Exponential(λ=1.0) PDF and CDF at x=0,0.5,1,2 ===";
+    print "x=0.0:  pdf=", exponential_pdf(1.0, 0.0), "  cdf=", exponential_cdf(1.0, 0.0);
+    print "x=0.5:  pdf=", exponential_pdf(1.0, 0.5), "  cdf=", exponential_cdf(1.0, 0.5);
+    print "x=1.0:  pdf=", exponential_pdf(1.0, 1.0), "  cdf=", exponential_cdf(1.0, 1.0);
+    print "x=2.0:  pdf=", exponential_pdf(1.0, 2.0), "  cdf=", exponential_cdf(1.0, 2.0);
+
+    print "";
+    print "=== Normal(0,1) via builtin vs log-normal derived ===";
+    print "N(0,1) pdf at x=0:   ", f64_normal_pdf(0.0, 0.0, 1.0);
+    print "N(0,1) cdf at x=0:   ", f64_normal_cdf(0.0, 0.0, 1.0), " (should be 0.5)";
+    print "LogNormal(0,1) at x=1:", log_normal_pdf(0.0, 1.0, 1.0);
+
+    print "";
+    print "=== Student t-PDF (df=1 Cauchy, df=10 near-normal) at x=0 ===";
+    let pi: f64 = 3.141592653589793;
+    print "t_pdf(df=1, x=0)  =", t_pdf(1.0, 0.0), "  (1/π ≈", 1.0 / pi, ")";
+    print "t_pdf(df=10, x=0) =", t_pdf(10.0, 0.0);
+    print "N(0,1) pdf at x=0=", f64_normal_pdf(0.0, 0.0, 1.0);
+
+    print "";
+    print "=== Beta(2,2) PDF at x=0.25,0.5,0.75 ===";
+    print "x=0.25:", beta_pdf(2.0, 2.0, 0.25);
+    print "x=0.50:", beta_pdf(2.0, 2.0, 0.5), " (peak = 1.5)";
+    print "x=0.75:", beta_pdf(2.0, 2.0, 0.75);
+
+    print "";
+    print "=== Information theory: fair coin vs biased coin ===";
+    let fair: Vec<f64> = vec(0.5);
+    push(mut ref fair, 0.5);
+    let biased: Vec<f64> = vec(0.9);
+    push(mut ref biased, 0.1);
+    print "H(fair coin)   =", shannon_entropy(ref fair), "bits";
+    print "H(biased 90/10)=", shannon_entropy(ref biased), "bits";
+    print "D_KL(fair||biased) =", kl_divergence(ref fair, ref biased), "nats";
+    print "D_KL(biased||fair) =", kl_divergence(ref biased, ref fair), "nats";
+    print "H(fair,biased) =", cross_entropy(ref fair, ref biased), "nats";
+    print "Renyi H_2(fair)=", renyi_entropy(ref fair, 2.0), "nats (= log 2)";
+
+    return 0;
+}

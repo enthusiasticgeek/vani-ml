@@ -1,0 +1,49 @@
+// Compares gradient descent, Newton's method, and coordinate descent on the
+// classic Rosenbrock ("banana") function, starting from the standard hard
+// point (-1.2, 1). Illustrates why Newton's method converges so much faster
+// once you have (or can approximate) second-derivative information.
+//
+// Run with:  vanic run examples/rosenbrock_showdown.vani
+
+use "../src/lib.vani";
+
+#[bounded_stack(bytes = 120)]
+fn hessian_analytic_rosenbrock(x: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let h00: f64 = 2.0 - 400.0 * x[1] + 1200.0 * x[0] * x[0];
+    let h01: f64 = 0.0 - 400.0 * x[0];
+    let out: Vec<f64> = vec(h00);
+    push(mut ref out, h01);
+    push(mut ref out, h01);
+    push(mut ref out, 200.0);
+    return out;
+}
+
+fn main() -> i64 {
+    let x0: Vec<f64> = vec(0.0 - 1.2);
+    push(mut ref x0, 1.0);
+
+    print "Rosenbrock minimum is at (1, 1), f = 0.";
+    print "";
+
+    print "gradient_descent_backtracking (up to 20000 iters):";
+    let xgd: Vec<f64> = gradient_descent_backtracking(rosenbrock_fn, rosenbrock_grad, ref x0, 2, 20000, 1.0e-8);
+    print xgd[0];
+    print xgd[1];
+    print rosenbrock_fn(ref xgd, 2);
+    print "";
+
+    print "newton_nd, analytic gradient+Hessian (up to 20 iters):";
+    let xn: Vec<f64> = newton_nd(rosenbrock_fn, rosenbrock_grad, hessian_analytic_rosenbrock, ref x0, 2, 20, 1.0e-12);
+    print xn[0];
+    print xn[1];
+    print rosenbrock_fn(ref xn, 2);
+    print "";
+
+    print "coordinate_descent, fully derivative-free (up to 5000 iters):";
+    let xc: Vec<f64> = coordinate_descent(rosenbrock_fn, ref x0, 2, 0.001, 5000, 1.0e-10, 1.0e-6);
+    print xc[0];
+    print xc[1];
+    print rosenbrock_fn(ref xc, 2);
+
+    return 0;
+}

@@ -1,0 +1,102 @@
+use "../src/lib.vani";
+
+fn xs5() -> Vec<f64> {
+    let v: Vec<f64> = vec(1.0);
+    push(mut ref v, 2.0);
+    push(mut ref v, 3.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 5.0);
+    return v;
+}
+
+// ys = 2 * xs5(): [2,4,6,8,10], variance = 10.0 (4x the variance of xs5, since
+// scaling by k scales variance by k^2).
+fn ys5() -> Vec<f64> {
+    let v: Vec<f64> = vec(2.0);
+    push(mut ref v, 4.0);
+    push(mut ref v, 6.0);
+    push(mut ref v, 8.0);
+    push(mut ref v, 10.0);
+    return v;
+}
+
+// f_stat(xs5, ys5) = var(xs5)/var(ys5) = 2.5/10.0 = 0.25
+#[test]
+fn test_f_stat_basic() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let ys: Vec<f64> = ys5();
+    assert abs(f_stat(ref xs, ref ys) - 0.25) < 1.0e-10;
+    return 0;
+}
+
+// pooled_variance(xs5, ys5) = ((5-1)*2.5 + (5-1)*10.0) / (5+5-2) = 50/8 = 6.25
+#[test]
+fn test_pooled_variance_basic() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let ys: Vec<f64> = ys5();
+    assert abs(pooled_variance(ref xs, ref ys) - 6.25) < 1.0e-10;
+    return 0;
+}
+
+// welch_df(xs5, ys5): a=vx/nx=0.5, b=vy/ny=2.0
+// denom = a^2/(nx-1) + b^2/(ny-1) = 0.0625 + 1.0 = 1.0625
+// df = (a+b)^2 / denom = 6.25 / 1.0625 = 5.882352941176...
+#[test]
+fn test_welch_df_basic() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let ys: Vec<f64> = ys5();
+    let df: f64 = welch_df(ref xs, ref ys);
+    assert abs(df - 5.882352941176471) < 1.0e-9;
+    return 0;
+}
+
+// standardize([1,2,3,4,5]): mean=3, std=sqrt(2.5); z-scores are symmetric
+// around 0 and z[2] (the mean itself) is exactly 0.
+#[test]
+fn test_standardize_basic() -> i64 {
+    let xs: Vec<f64> = xs5();
+    let z: Vec<f64> = standardize(ref xs);
+    let s: f64 = sqrt(2.5);
+    assert abs(z[0] - ((0.0 - 2.0) / s)) < 1.0e-10;
+    assert abs(z[1] - ((0.0 - 1.0) / s)) < 1.0e-10;
+    assert abs(z[2] - 0.0) < 1.0e-10;
+    assert abs(z[3] - (1.0 / s)) < 1.0e-10;
+    assert abs(z[4] - (2.0 / s)) < 1.0e-10;
+    return 0;
+}
+
+// mutual_information_discrete: independent joint (p_xy = p_x * p_y everywhere)
+// has zero mutual information.
+#[test]
+fn test_mutual_information_independent() -> i64 {
+    let ps_x: Vec<f64> = vec(0.5);
+    push(mut ref ps_x, 0.5);
+    let ps_y: Vec<f64> = vec(0.5);
+    push(mut ref ps_y, 0.5);
+    let ps_xy: Vec<f64> = vec(0.25);
+    push(mut ref ps_xy, 0.25);
+    push(mut ref ps_xy, 0.25);
+    push(mut ref ps_xy, 0.25);
+    let mi: f64 = mutual_information_discrete(ref ps_xy, ref ps_x, ref ps_y, 2, 2);
+    assert abs(mi - 0.0) < 1.0e-10;
+    return 0;
+}
+
+// mutual_information_discrete: perfectly correlated joint (X always equals Y,
+// each fair) has mutual information = ln(2), matching the marginal entropy.
+#[test]
+fn test_mutual_information_perfectly_correlated() -> i64 {
+    let ps_x: Vec<f64> = vec(0.5);
+    push(mut ref ps_x, 0.5);
+    let ps_y: Vec<f64> = vec(0.5);
+    push(mut ref ps_y, 0.5);
+    let ps_xy: Vec<f64> = vec(0.5);
+    push(mut ref ps_xy, 0.0);
+    push(mut ref ps_xy, 0.0);
+    push(mut ref ps_xy, 0.5);
+    let mi: f64 = mutual_information_discrete(ref ps_xy, ref ps_x, ref ps_y, 2, 2);
+    assert abs(mi - log(2.0)) < 1.0e-10;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

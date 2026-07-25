@@ -1,0 +1,132 @@
+use "../src/lib.vani";
+
+// random_walk_1d returns exactly n_steps positions, starting at 0.
+#[test]
+fn test_random_walk_length_and_start() -> i64 {
+    let walk: Vec<f64> = random_walk_1d(20, 1.0);
+    assert len(walk) == 20;
+    assert abs(walk[0] - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// A random walk with sigma=0 never moves.
+#[test]
+fn test_random_walk_zero_sigma_stays_put() -> i64 {
+    let walk: Vec<f64> = random_walk_1d(10, 0.0);
+    let n: i64 = len(walk) as i64;
+    let i: i64 = 0;
+    while i < n {
+        assert abs(walk[i] - 0.0) < 1.0e-12;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// geometric_brownian returns exactly n_steps prices, starting at s0.
+#[test]
+fn test_gbm_length_and_start() -> i64 {
+    let path: Vec<f64> = geometric_brownian(100.0, 0.05, 0.2, 0.01, 15);
+    assert len(path) == 15;
+    assert abs(path[0] - 100.0) < 1.0e-12;
+    return 0;
+}
+
+// With sigma=0 and mu=0, GBM stays exactly at s0 (no drift, no noise).
+#[test]
+fn test_gbm_no_drift_no_noise_is_flat() -> i64 {
+    let path: Vec<f64> = geometric_brownian(50.0, 0.0, 0.0, 0.01, 10);
+    let n: i64 = len(path) as i64;
+    let i: i64 = 0;
+    while i < n {
+        assert abs(path[i] - 50.0) < 1.0e-9;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// GBM stays positive for small dt / moderate sigma (the whole point of
+// modelling log-returns multiplicatively rather than additively).
+#[test]
+fn test_gbm_stays_positive() -> i64 {
+    let path: Vec<f64> = geometric_brownian(100.0, 0.05, 0.2, 0.001, 200);
+    let n: i64 = len(path) as i64;
+    let i: i64 = 0;
+    while i < n {
+        assert path[i] > 0.0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// PCA power iteration finds the dominant eigenvector of a clearly
+// anisotropic diagonal covariance: diag(4,1) -> dominant axis is [1,0].
+#[test]
+fn test_pca_power_iter_finds_dominant_axis() -> i64 {
+    let C: Vec<f64> = vec(4.0);
+    push(mut ref C, 0.0);
+    push(mut ref C, 0.0);
+    push(mut ref C, 1.0);
+    let pc1: Vec<f64> = pca_power_iter(ref C, 2, 200, 1.0e-12);
+    assert abs(abs(pc1[0]) - 1.0) < 1.0e-6;
+    assert abs(pc1[1]) < 1.0e-6;
+    return 0;
+}
+
+// Deflating the dominant component from diag(4,1) leaves diag(0,1); the
+// second power iteration should then find the [0,1] axis.
+#[test]
+fn test_pca_deflate_reveals_second_axis() -> i64 {
+    let C: Vec<f64> = vec(4.0);
+    push(mut ref C, 0.0);
+    push(mut ref C, 0.0);
+    push(mut ref C, 1.0);
+    let pc1: Vec<f64> = pca_power_iter(ref C, 2, 200, 1.0e-12);
+    let deflated: Vec<f64> = pca_deflate(ref C, 2, ref pc1);
+    assert abs(deflated[0]) < 1.0e-6;
+    assert abs(deflated[3] - 1.0) < 1.0e-6;
+    let pc2: Vec<f64> = pca_power_iter(ref deflated, 2, 200, 1.0e-12);
+    assert abs(pc2[0]) < 1.0e-6;
+    assert abs(abs(pc2[1]) - 1.0) < 1.0e-6;
+    return 0;
+}
+
+// 1D Kalman filter: hand-verified predict+update numbers.
+// x0=10, P0=1, F=1, Q=0.01 -> predict: x=10, P=1.01.
+// Then measurement z=11, H=1, R=0.1 -> update: x=10.909909909909909, P=0.09099099099099099.
+#[test]
+fn test_kalman_1d_predict_then_update() -> i64 {
+    let x0: Vec<f64> = vec(10.0);
+    let P0: Vec<f64> = vec(1.0);
+    let F: Vec<f64> = vec(1.0);
+    let Q: Vec<f64> = vec(0.01);
+    let pred: Vec<f64> = kalman_predict(ref x0, ref P0, ref F, ref Q, 1);
+    assert abs(pred[0] - 10.0) < 1.0e-9;
+    assert abs(pred[1] - 1.01) < 1.0e-9;
+
+    let x_pred: Vec<f64> = vec(pred[0]);
+    let P_pred: Vec<f64> = vec(pred[1]);
+    let z: Vec<f64> = vec(11.0);
+    let H: Vec<f64> = vec(1.0);
+    let R: Vec<f64> = vec(0.1);
+    let upd: Vec<f64> = kalman_update(ref x_pred, ref P_pred, ref z, ref H, ref R, 1, 1);
+    assert abs(upd[0] - 10.909909909909909) < 1.0e-9;
+    assert abs(upd[1] - 0.09099099099099099) < 1.0e-9;
+    return 0;
+}
+
+// Kalman filter with a perfect measurement (R=0) should snap the state
+// exactly to the measurement.
+#[test]
+fn test_kalman_zero_measurement_noise_trusts_measurement() -> i64 {
+    let x: Vec<f64> = vec(5.0);
+    let P: Vec<f64> = vec(2.0);
+    let z: Vec<f64> = vec(9.0);
+    let H: Vec<f64> = vec(1.0);
+    let R: Vec<f64> = vec(0.0);
+    let upd: Vec<f64> = kalman_update(ref x, ref P, ref z, ref H, ref R, 1, 1);
+    assert abs(upd[0] - 9.0) < 1.0e-9;
+    assert abs(upd[1] - 0.0) < 1.0e-9;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

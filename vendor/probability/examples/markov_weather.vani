@@ -1,0 +1,52 @@
+// Markov chain demo: a 3-state (Sun/Cloud/Rain) weather model.
+//
+// Run with:  vanic run examples/markov_weather.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // States: 0=Sun, 1=Cloud, 2=Rain.
+    // T[i*3+j] = P(tomorrow is j | today is i).
+    let T: Vec<f64> = vec(0.6);
+    push(mut ref T, 0.3);
+    push(mut ref T, 0.1);
+    push(mut ref T, 0.3);
+    push(mut ref T, 0.4);
+    push(mut ref T, 0.3);
+    push(mut ref T, 0.2);
+    push(mut ref T, 0.3);
+    push(mut ref T, 0.5);
+
+    print "=== 3-state weather chain: Sun / Cloud / Rain ===";
+
+    let today: Vec<f64> = vec(1.0);
+    push(mut ref today, 0.0);
+    push(mut ref today, 0.0);
+
+    print "Day 0 (certain sun):     ", today[0], today[1], today[2];
+
+    let day1: Vec<f64> = markov_step(ref today, ref T, 3);
+    print "Day 1:                   ", day1[0], day1[1], day1[2];
+
+    let day7: Vec<f64> = markov_run(ref today, ref T, 3, 7);
+    print "Day 7:                   ", day7[0], day7[1], day7[2];
+
+    let day30: Vec<f64> = markov_run(ref today, ref T, 3, 30);
+    print "Day 30:                  ", day30[0], day30[1], day30[2];
+
+    let pi_inf: Vec<f64> = markov_stationary(ref T, 3, 1.0e-12, 10000);
+    print "Long-run stationary dist:", pi_inf[0], pi_inf[1], pi_inf[2];
+
+    print "";
+    print "Day 30 should already be close to the stationary distribution --";
+    print "this is what 'the weather forgets its starting state' looks like.";
+
+    let steps: i64 = markov_mixing_steps(ref T, 3, 0.01, 1000);
+    print "";
+    print "Steps to get within TV distance 0.01 of stationary:", steps;
+
+    let h: f64 = markov_entropy_rate(ref T, 3, ref pi_inf);
+    print "Entropy rate at stationary (nats/day):", h;
+
+    return 0;
+}

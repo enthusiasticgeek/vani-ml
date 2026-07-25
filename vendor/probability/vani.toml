@@ -1,0 +1,19 @@
+[package]
+name    = "probability"
+version = "0.4.6"
+entry   = "src/lib.vani"
+authors = "enthusiasticgeek"
+license = "MIT"
+description = "Probability and statistics for vāṇī: descriptive stats, distributions, hypothesis tests, regression, entropy, Bayesian inference, Markov chains, time series, CDF/p-value hypothesis testing, multiple linear regression, PCA, and stochastic processes."
+registry = "kosh"
+
+[deps]
+# Added via `vanic add matrix` -- vendored + checksum-verified against the
+# registry at ./vendor/matrix. No other external deps — the vāṇī compiler already provides:
+#   f64_normal_pdf / f64_normal_cdf (normal distribution)
+#   rand_normal / rand_uniform / rand_i64 / rand_f64 / rand_bool / rand_in_range
+#   f64_erf / f64_erfc / f64_tgamma / f64_lgamma
+#   i64_factorial / i64_binomial / i64_perm
+#   f64_geometric_mean / f64_harmonic_mean / f64_quadratic_mean / f64_l1_norm
+# None of these must be reimplemented here.
+matrix = { path = "./vendor/matrix", version = "^0.2.0" }

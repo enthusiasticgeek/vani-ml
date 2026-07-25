@@ -1,0 +1,83 @@
+// End-to-end hypothesis test demo: raw data -> statistic -> degrees of
+// freedom -> p-value -> accept/reject decision.
+//
+// Scenario: does a new fertiliser increase plant height? Compare a treated
+// group against a control group with a two-sample Welch t-test.
+//
+// Run with:  vanic run examples/hypothesis_full.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    print "=== Welch two-sample t-test: fertiliser trial ===";
+
+    // Plant heights (cm), control group (no fertiliser).
+    let control: Vec<f64> = vec(14.2);
+    push(mut ref control, 13.8);
+    push(mut ref control, 15.1);
+    push(mut ref control, 14.6);
+    push(mut ref control, 13.9);
+    push(mut ref control, 14.4);
+
+    // Plant heights (cm), treated group (with fertiliser).
+    let treated: Vec<f64> = vec(16.1);
+    push(mut ref treated, 15.8);
+    push(mut ref treated, 16.9);
+    push(mut ref treated, 15.5);
+    push(mut ref treated, 16.4);
+    push(mut ref treated, 16.0);
+
+    print "Control mean  =", mean(ref control), " (n=", len(control), ")";
+    print "Treated mean  =", mean(ref treated), " (n=", len(treated), ")";
+    print "Control var   =", variance(ref control);
+    print "Treated var   =", variance(ref treated);
+
+    print "";
+    print "--- Step 1: test statistic ---";
+    let t: f64 = t_stat_two_sample(ref control, ref treated);
+    print "Welch t-statistic =", t;
+
+    print "";
+    print "--- Step 2: degrees of freedom (Satterthwaite) ---";
+    let df: f64 = welch_df(ref control, ref treated);
+    print "Welch df =", df;
+
+    print "";
+    print "--- Step 3: p-value ---";
+    let p: f64 = t_pvalue_two_tailed(t, df);
+    print "two-tailed p-value =", p;
+
+    print "";
+    print "--- Step 4: decision at alpha = 0.05 ---";
+    let alpha: f64 = 0.05;
+    if p < alpha {
+        print "p <", alpha, "-- reject the null hypothesis.";
+        print "Conclusion: the fertiliser is associated with a statistically";
+        print "significant difference in plant height.";
+    } else {
+        print "p >=", alpha, "-- fail to reject the null hypothesis.";
+        print "Conclusion: not enough evidence of a difference.";
+    }
+
+    print "";
+    print "=== Same trial, chi-squared goodness-of-fit sanity check ===";
+    // Suppose we also bucket plants into short/medium/tall and expect a
+    // uniform split under the null; observed counts are skewed.
+    let observed: Vec<f64> = vec(2.0);
+    push(mut ref observed, 3.0);
+    push(mut ref observed, 7.0);
+    let expected: Vec<f64> = vec(4.0);
+    push(mut ref expected, 4.0);
+    push(mut ref expected, 4.0);
+    let chi2: f64 = chi_squared_stat(ref observed, ref expected);
+    let chi2_df: f64 = 2.0;
+    let chi2_p: f64 = chi_squared_pvalue(chi2, chi2_df);
+    print "chi-squared stat =", chi2, " df =", chi2_df, " p-value =", chi2_p;
+    if chi2_p < alpha {
+        print "Reject uniform-split null -- the height buckets are skewed.";
+    } else {
+        print "Fail to reject -- consistent with a uniform split.";
+    }
+
+    return 0;
+}

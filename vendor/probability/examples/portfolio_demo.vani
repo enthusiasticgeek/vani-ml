@@ -1,0 +1,69 @@
+// Multi-asset correlated geometric Brownian motion simulation.
+//
+// geometric_brownian() (in this library) only simulates one asset at a time
+// with independent noise. This demo shows how to layer correlation on top
+// using vani-matrix's Cholesky factorisation: draw independent standard
+// normals per asset, then transform them with L (where correlation = L*L^T)
+// to get correlated shocks.
+//
+// Run with:  vanic run examples/portfolio_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    print "=== Two-asset correlated GBM portfolio simulation ===";
+
+    // Correlation matrix for 2 assets: rho = 0.7.
+    let corr: Vec<f64> = vec(1.0);
+    push(mut ref corr, 0.7);
+    push(mut ref corr, 0.7);
+    push(mut ref corr, 1.0);
+
+    let L: Vec<f64> = matrix::cholesky_factor(ref corr, 2);
+    print "Cholesky factor L =", L[0], L[1], L[2], L[3];
+
+    let s0_a: f64 = 100.0;
+    let s0_b: f64 = 50.0;
+    let mu_a: f64 = 0.08;
+    let mu_b: f64 = 0.05;
+    let sigma_a: f64 = 0.25;
+    let sigma_b: f64 = 0.15;
+    let dt: f64 = 1.0 / 252.0;
+    let n_steps: i64 = 15;
+    let sqrt_dt: f64 = sqrt(dt);
+
+    let path_a: Vec<f64> = vec(s0_a);
+    let path_b: Vec<f64> = vec(s0_b);
+    let sa: f64 = s0_a;
+    let sb: f64 = s0_b;
+
+    let i: i64 = 1;
+    while i < n_steps {
+        let z1: f64 = rand_normal();
+        let z2: f64 = rand_normal();
+        // Correlated shocks: [w1, w2] = L * [z1, z2].
+        let w1: f64 = L[0] * z1 + L[1] * z2;
+        let w2: f64 = L[2] * z1 + L[3] * z2;
+        sa = sa + mu_a * sa * dt + sigma_a * sa * sqrt_dt * w1;
+        sb = sb + mu_b * sb * dt + sigma_b * sb * sqrt_dt * w2;
+        push(mut ref path_a, sa);
+        push(mut ref path_b, sb);
+        i = i + 1;
+    }
+
+    print "";
+    print "Day    Asset A       Asset B";
+    let j: i64 = 0;
+    while j < n_steps {
+        print j, "  ", path_a[j], "  ", path_b[j];
+        j = j + 1;
+    }
+
+    print "";
+    print "Realised correlation of daily returns (should trend toward +0.7):";
+    let ret_a: Vec<f64> = diff_series(ref path_a);
+    let ret_b: Vec<f64> = diff_series(ref path_b);
+    print "pearson_r(returns_a, returns_b) =", pearson_r(ref ret_a, ref ret_b);
+
+    return 0;
+}

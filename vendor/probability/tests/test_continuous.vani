@@ -1,0 +1,134 @@
+use "../src/lib.vani";
+
+// exponential_pdf(1.0, 0.0) = 1.0 (rate=1, x=0: λ e^0 = λ = 1)
+#[test]
+fn test_exponential_pdf_at_zero() -> i64 {
+    assert abs(exponential_pdf(1.0, 0.0) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+// exponential_pdf(2.0, 1.0) = 2 e^{-2} ≈ 0.27067
+#[test]
+fn test_exponential_pdf() -> i64 {
+    assert abs(exponential_pdf(2.0, 1.0) - 2.0 * exp(0.0 - 2.0)) < 1.0e-12;
+    return 0;
+}
+
+// exponential_pdf negative x → 0
+#[test]
+fn test_exponential_pdf_neg() -> i64 {
+    assert abs(exponential_pdf(1.0, 0.0 - 1.0)) < 1.0e-12;
+    return 0;
+}
+
+// exponential_cdf(1.0, 1.0) = 1 - e^{-1} ≈ 0.63212
+#[test]
+fn test_exponential_cdf() -> i64 {
+    assert abs(exponential_cdf(1.0, 1.0) - (1.0 - exp(0.0 - 1.0))) < 1.0e-12;
+    return 0;
+}
+
+// exponential_cdf(λ, 0) = 0
+#[test]
+fn test_exponential_cdf_zero() -> i64 {
+    assert abs(exponential_cdf(3.0, 0.0)) < 1.0e-12;
+    return 0;
+}
+
+// uniform_pdf(0.0, 2.0, 1.0) = 0.5
+#[test]
+fn test_uniform_pdf_inside() -> i64 {
+    assert abs(uniform_pdf(0.0, 2.0, 1.0) - 0.5) < 1.0e-12;
+    return 0;
+}
+
+// uniform_pdf outside range → 0
+#[test]
+fn test_uniform_pdf_outside() -> i64 {
+    assert abs(uniform_pdf(0.0, 1.0, 2.0)) < 1.0e-12;
+    assert abs(uniform_pdf(0.0, 1.0, 0.0 - 0.1)) < 1.0e-12;
+    return 0;
+}
+
+// uniform_cdf(0.0, 1.0, 0.5) = 0.5
+#[test]
+fn test_uniform_cdf_mid() -> i64 {
+    assert abs(uniform_cdf(0.0, 1.0, 0.5) - 0.5) < 1.0e-12;
+    return 0;
+}
+
+// uniform_cdf clamp: below → 0, above → 1
+#[test]
+fn test_uniform_cdf_clamp() -> i64 {
+    assert abs(uniform_cdf(0.0, 1.0, 0.0 - 1.0)) < 1.0e-12;
+    assert abs(uniform_cdf(0.0, 1.0, 2.0) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+// t_pdf(1.0, 0.0) = 1/π ≈ 0.31831 (Cauchy at x=0)
+#[test]
+fn test_t_pdf_cauchy() -> i64 {
+    let pi: f64 = 3.141592653589793;
+    assert abs(t_pdf(1.0, 0.0) - 1.0 / pi) < 1.0e-8;
+    return 0;
+}
+
+// beta_pdf(2.0, 2.0, 0.5) = 6 * 0.25 = 1.5
+#[test]
+fn test_beta_pdf() -> i64 {
+    assert abs(beta_pdf(2.0, 2.0, 0.5) - 1.5) < 1.0e-8;
+    return 0;
+}
+
+// beta_pdf outside (0,1) → 0
+#[test]
+fn test_beta_pdf_oob() -> i64 {
+    assert abs(beta_pdf(2.0, 2.0, 0.0)) < 1.0e-12;
+    assert abs(beta_pdf(2.0, 2.0, 1.0)) < 1.0e-12;
+    return 0;
+}
+
+// chi_squared_pdf(2.0, 2.0) = e^{-1}/2 ≈ 0.18394
+#[test]
+fn test_chi_squared_pdf() -> i64 {
+    assert abs(chi_squared_pdf(2.0, 2.0) - exp(0.0 - 1.0) / 2.0) < 1.0e-8;
+    return 0;
+}
+
+// chi_squared_pdf x<=0 → 0
+#[test]
+fn test_chi_squared_pdf_zero() -> i64 {
+    assert abs(chi_squared_pdf(2.0, 0.0)) < 1.0e-12;
+    return 0;
+}
+
+// gamma_pdf(shape=1.0, rate=1.0, x=1.0) = e^{-1} ≈ 0.36788 (Exponential(1))
+#[test]
+fn test_gamma_pdf_exp1() -> i64 {
+    assert abs(gamma_pdf(1.0, 1.0, 1.0) - exp(0.0 - 1.0)) < 1.0e-12;
+    return 0;
+}
+
+// laplace_pdf(0.0, 1.0, 0.0) = 0.5  (peak at μ=0)
+#[test]
+fn test_laplace_pdf_at_mu() -> i64 {
+    assert abs(laplace_pdf(0.0, 1.0, 0.0) - 0.5) < 1.0e-12;
+    return 0;
+}
+
+// log_normal_pdf(0.0, 1.0, 1.0) = f_N(0; 0, 1) / 1 = 1/sqrt(2π)
+#[test]
+fn test_log_normal_pdf_at_one() -> i64 {
+    let expected: f64 = f64_normal_pdf(0.0, 0.0, 1.0);
+    assert abs(log_normal_pdf(0.0, 1.0, 1.0) - expected) < 1.0e-12;
+    return 0;
+}
+
+// log_normal_pdf x<=0 → 0
+#[test]
+fn test_log_normal_pdf_zero() -> i64 {
+    assert abs(log_normal_pdf(0.0, 1.0, 0.0)) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

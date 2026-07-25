@@ -1,0 +1,33 @@
+intent "vani-ml linear regression: exact-fit recovery + R^2";
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // y = 5 + 2*x1 + 3*x2, no noise -- fit should recover beta exactly
+    // (up to floating point) and R^2 should be ~1.
+    let X: Vec<f64> = vec(1.0, 2.0, 2.0, 1.0, 3.0, 4.0, 4.0, 3.0, 5.0, 5.0);
+    let y: Vec<f64> = vec(13.0, 12.0, 23.0, 22.0, 30.0);
+    let n_obs: i64 = 5;
+    let n_pred: i64 = 2;
+
+    let Xi: Vec<f64> = linreg_add_intercept(ref X, n_obs, n_pred);
+    assert len(ref Xi) as i64 == n_obs * (n_pred + 1);
+
+    let beta: Vec<f64> = linreg_fit(ref Xi, ref y, n_obs, n_pred + 1);
+    assert abs(beta[0] - 5.0) < 1.0e-6;
+    assert abs(beta[1] - 2.0) < 1.0e-6;
+    assert abs(beta[2] - 3.0) < 1.0e-6;
+
+    let y_hat: Vec<f64> = linreg_predict(ref Xi, ref beta, n_obs, n_pred + 1);
+    let i: i64 = 0;
+    while i < n_obs {
+        assert abs(y_hat[i] - y[i]) < 1.0e-6;
+        i = i + 1;
+    }
+
+    let r2: f64 = linreg_r_squared(ref y, ref y_hat);
+    assert r2 > 0.999999;
+
+    print "linreg tests passed";
+    return 0;
+}

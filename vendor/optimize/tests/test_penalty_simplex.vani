@@ -1,0 +1,70 @@
+// Tests for the constrained penalty-method optimizer and the tableau simplex
+// linear-programming solver.
+// Run with:  vanic test tests/test_penalty_simplex.vani
+
+use "../src/lib.vani";
+
+fn close(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-3;
+}
+
+// Constraint g(x) = 1 - x - y <= 0  (i.e. x + y >= 1).
+#[bounded_stack(bytes = 56)]
+fn constraint_sum_ge_1(x: ref Vec<f64>, n: i64) -> f64 {
+    return 1.0 - x[0] - x[1];
+}
+
+fn main() -> i64 {
+    // penalty_method_minimize: minimize x^2+y^2 subject to x+y>=1.
+    // Exact solution by Lagrange multipliers: (0.5, 0.5), f = 0.5.
+    let x0: Vec<f64> = vec(0.0);
+    push(mut ref x0, 0.0);
+    let xmin: Vec<f64> = penalty_method_minimize(sphere_fn, constraint_sum_ge_1, ref x0, 2, 1.0, 10.0, 8, 200, 1.0e-5);
+    assert close(xmin[0], 0.5);
+    assert close(xmin[1], 0.5);
+    assert sphere_fn(ref xmin, 2) < 0.51;
+
+    // simplex_solve on the classic Wyndor Glass Co. LP:
+    //   maximize 3x + 5y
+    //   subject to  x        <= 4
+    //               2y       <= 12
+    //               3x + 2y  <= 18
+    //               x, y >= 0
+    // Optimal solution: x=2, y=6, objective=36.
+    let c1: Vec<f64> = vec(3.0);
+    push(mut ref c1, 5.0);
+    let A1: Vec<f64> = vec(1.0);
+    push(mut ref A1, 0.0);
+    push(mut ref A1, 0.0);
+    push(mut ref A1, 2.0);
+    push(mut ref A1, 3.0);
+    push(mut ref A1, 2.0);
+    let b1: Vec<f64> = vec(4.0);
+    push(mut ref b1, 12.0);
+    push(mut ref b1, 18.0);
+    let x1: Vec<f64> = simplex_solve(ref c1, ref A1, ref b1, 2, 3);
+    assert close(x1[0], 2.0);
+    assert close(x1[1], 6.0);
+    assert close(simplex_value(ref c1, ref x1, 2), 36.0);
+
+    // simplex_solve on a second, independent LP:
+    //   maximize 2x + 3y
+    //   subject to  x + y  <= 4
+    //               x + 2y <= 5
+    //               x, y >= 0
+    // Optimal solution: x=3, y=1, objective=9.
+    let c2: Vec<f64> = vec(2.0);
+    push(mut ref c2, 3.0);
+    let A2: Vec<f64> = vec(1.0);
+    push(mut ref A2, 1.0);
+    push(mut ref A2, 1.0);
+    push(mut ref A2, 2.0);
+    let b2: Vec<f64> = vec(4.0);
+    push(mut ref b2, 5.0);
+    let x2: Vec<f64> = simplex_solve(ref c2, ref A2, ref b2, 2, 2);
+    assert close(x2[0], 3.0);
+    assert close(x2[1], 1.0);
+    assert close(simplex_value(ref c2, ref x2, 2), 9.0);
+
+    return 0;
+}

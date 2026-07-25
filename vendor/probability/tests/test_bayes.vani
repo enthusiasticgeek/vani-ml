@@ -1,0 +1,99 @@
+use "../src/lib.vani";
+
+fn priors2() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.5);
+    push(mut ref v, 0.5);
+    return v;
+}
+
+fn likelihoods2() -> Vec<f64> {
+    let v: Vec<f64> = vec(0.2);
+    push(mut ref v, 0.8);
+    return v;
+}
+
+// conditional_prob(0.2, 0.5) = 0.4
+#[test]
+fn test_conditional_prob_basic() -> i64 {
+    assert abs(conditional_prob(0.2, 0.5) - 0.4) < 1.0e-12;
+    return 0;
+}
+
+// conditional_prob guards P(B) == 0
+#[test]
+fn test_conditional_prob_zero_guard() -> i64 {
+    assert abs(conditional_prob(0.3, 0.0) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// law_of_total_prob([0.5,0.5], [0.2,0.8]) = 0.5*0.2 + 0.5*0.8 = 0.5
+#[test]
+fn test_law_of_total_prob() -> i64 {
+    let priors: Vec<f64> = priors2();
+    let likelihoods: Vec<f64> = likelihoods2();
+    assert abs(law_of_total_prob(ref priors, ref likelihoods) - 0.5) < 1.0e-12;
+    return 0;
+}
+
+// bayes_posterior([0.5,0.5], [0.2,0.8]) = [0.1, 0.4]
+#[test]
+fn test_bayes_posterior() -> i64 {
+    let priors: Vec<f64> = priors2();
+    let likelihoods: Vec<f64> = likelihoods2();
+    let post: Vec<f64> = bayes_posterior(ref priors, ref likelihoods);
+    assert abs(post[0] - 0.1) < 1.0e-12;
+    assert abs(post[1] - 0.4) < 1.0e-12;
+    return 0;
+}
+
+// normalize_probs([0.1, 0.4]) = [0.2, 0.8]
+#[test]
+fn test_normalize_probs_basic() -> i64 {
+    let ps: Vec<f64> = vec(0.1);
+    push(mut ref ps, 0.4);
+    let out: Vec<f64> = normalize_probs(ref ps);
+    assert abs(out[0] - 0.2) < 1.0e-12;
+    assert abs(out[1] - 0.8) < 1.0e-12;
+    return 0;
+}
+
+// normalize_probs([0,0]) = [0,0] (guarded, not NaN)
+#[test]
+fn test_normalize_probs_zero_sum() -> i64 {
+    let ps: Vec<f64> = vec(0.0);
+    push(mut ref ps, 0.0);
+    let out: Vec<f64> = normalize_probs(ref ps);
+    assert abs(out[0] - 0.0) < 1.0e-12;
+    assert abs(out[1] - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// bayes_log_posterior: log_prior + log_likelihood, elementwise
+#[test]
+fn test_bayes_log_posterior() -> i64 {
+    let log_priors: Vec<f64> = vec(log(0.5));
+    push(mut ref log_priors, log(0.5));
+    let log_likelihoods: Vec<f64> = vec(log(0.2));
+    push(mut ref log_likelihoods, log(0.8));
+    let out: Vec<f64> = bayes_log_posterior(ref log_priors, ref log_likelihoods);
+    assert abs(out[0] - log(0.1)) < 1.0e-10;
+    assert abs(out[1] - log(0.4)) < 1.0e-10;
+    return 0;
+}
+
+// naive_bayes_classify: 2 classes x 2 features. Class 1 has much higher
+// joint likelihood (0.6*0.5=0.3) than class 0 (0.1*0.2=0.02); equal priors.
+#[test]
+fn test_naive_bayes_classify() -> i64 {
+    let log_priors: Vec<f64> = vec(log(0.5));
+    push(mut ref log_priors, log(0.5));
+    let ll: Vec<f64> = vec(log(0.1));
+    push(mut ref ll, log(0.2));
+    push(mut ref ll, log(0.6));
+    push(mut ref ll, log(0.5));
+    let cls: i64 = naive_bayes_classify(ref log_priors, ref ll, 2, 2);
+    assert cls == 1;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

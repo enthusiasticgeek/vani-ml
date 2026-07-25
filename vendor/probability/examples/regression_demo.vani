@@ -1,0 +1,88 @@
+// Regression and hypothesis testing demo.
+// Fits OLS regression to simulated height/weight data and runs t-tests.
+//
+// Run with:  vanic run examples/regression_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // Height (cm) and weight (kg): approximate linear relationship.
+    let height: Vec<f64> = vec(160.0);
+    push(mut ref height, 165.0);
+    push(mut ref height, 170.0);
+    push(mut ref height, 175.0);
+    push(mut ref height, 180.0);
+    push(mut ref height, 185.0);
+    push(mut ref height, 190.0);
+
+    let weight: Vec<f64> = vec(55.0);
+    push(mut ref weight, 60.0);
+    push(mut ref weight, 65.0);
+    push(mut ref weight, 70.0);
+    push(mut ref weight, 76.0);
+    push(mut ref weight, 81.0);
+    push(mut ref weight, 86.0);
+
+    print "=== OLS regression: weight ~ height ===";
+    let slope: f64 = ols_slope(ref height, ref weight);
+    let intercept: f64 = ols_intercept(ref height, ref weight);
+    let r: f64 = pearson_r(ref height, ref weight);
+    let r2: f64 = ols_r_squared(ref height, ref weight);
+    let cov: f64 = covariance(ref height, ref weight);
+
+    print "slope:      ", slope, "  (kg per cm)";
+    print "intercept:  ", intercept;
+    print "pearson r:  ", r;
+    print "R²:         ", r2;
+    print "covariance: ", cov;
+
+    print "";
+    print "Predicted weight at height=172 cm:";
+    print "  ", slope * 172.0 + intercept, "kg";
+
+    // Descriptive stats on each variable.
+    print "";
+    print "=== Descriptive stats: height ===";
+    print "mean:    ", mean(ref height);
+    print "std_dev: ", std_dev(ref height);
+    print "median:  ", median(ref height);
+
+    print "";
+    print "=== Descriptive stats: weight ===";
+    print "mean:    ", mean(ref weight);
+    print "std_dev: ", std_dev(ref weight);
+
+    // Hypothesis tests.
+    print "";
+    print "=== Hypothesis tests on weight ===";
+    // One-sample t-test: is mean weight significantly different from 70?
+    let t1: f64 = t_stat_one_sample(ref weight, 70.0);
+    print "t-stat (H0: mean=70): ", t1;
+
+    // Two-sample t-test: first 3 vs last 3 weights.
+    let wt_lo: Vec<f64> = vec(55.0);
+    push(mut ref wt_lo, 60.0);
+    push(mut ref wt_lo, 65.0);
+    let wt_hi: Vec<f64> = vec(76.0);
+    push(mut ref wt_hi, 81.0);
+    push(mut ref wt_hi, 86.0);
+    let t2: f64 = t_stat_two_sample(ref wt_lo, ref wt_hi);
+    print "t-stat (low vs high group): ", t2;
+
+    // Chi-squared goodness-of-fit: observed height distribution vs expected uniform.
+    let obs: Vec<f64> = vec(3.0);
+    push(mut ref obs, 1.0);
+    push(mut ref obs, 2.0);
+    push(mut ref obs, 3.0);
+    let exp_u: Vec<f64> = vec(2.25);
+    push(mut ref exp_u, 2.25);
+    push(mut ref exp_u, 2.25);
+    push(mut ref exp_u, 2.25);
+    print "chi²-stat (uniform dist test): ", chi_squared_stat(ref obs, ref exp_u);
+
+    // z-test with known σ.
+    let z: f64 = z_stat(ref weight, 70.0, 10.0);
+    print "z-stat (H0: mean=70, σ=10): ", z;
+
+    return 0;
+}

@@ -1,0 +1,69 @@
+use "../src/lib.vani";
+
+// _gamma_reg_series and _gamma_reg_cf are both valid near their boundary
+// (x == a+1); they should agree closely there (crosscheck between the two
+// numerical methods).
+#[test]
+fn test_gamma_reg_series_cf_agree_near_boundary() -> i64 {
+    let a: f64 = 5.0;
+    let x: f64 = a + 1.0;
+    let from_series: f64 = _gamma_reg_series(a, x);
+    // Push x just past the boundary so the CF branch is valid too.
+    let from_cf: f64 = 1.0 - _gamma_reg_cf(a, x + 0.001);
+    assert abs(from_series - from_cf) < 1.0e-4;
+    return 0;
+}
+
+// P(a,x) -> 1 as x grows large relative to a (the gamma distribution's mass
+// is almost entirely below x).
+#[test]
+fn test_gamma_reg_converges_to_one() -> i64 {
+    assert abs(_gamma_reg(3.0, 50.0) - 1.0) < 1.0e-9;
+    return 0;
+}
+
+// P(a,x) -> 0 as x -> 0.
+#[test]
+fn test_gamma_reg_zero_at_origin() -> i64 {
+    assert abs(_gamma_reg(3.0, 0.0) - 0.0) < 1.0e-12;
+    return 0;
+}
+
+// chi-squared with df=2 is Exponential(0.5): CDF(x) = 1 - e^(-x/2).
+// At x=2: 1 - e^(-1) = 0.6321205588285577.
+#[test]
+fn test_gamma_reg_matches_exponential_identity() -> i64 {
+    let via_gamma: f64 = chi_squared_cdf(2.0, 2.0);
+    let via_exp: f64 = 1.0 - exp(0.0 - 1.0);
+    assert abs(via_gamma - via_exp) < 1.0e-9;
+    return 0;
+}
+
+// _beta_reg symmetry relation: I_x(a,b) = 1 - I_{1-x}(b,a).
+#[test]
+fn test_beta_reg_symmetry() -> i64 {
+    let a: f64 = 2.0;
+    let b: f64 = 5.0;
+    let x: f64 = 0.3;
+    let lhs: f64 = _beta_reg(a, b, x);
+    let rhs: f64 = 1.0 - _beta_reg(b, a, 1.0 - x);
+    assert abs(lhs - rhs) < 1.0e-9;
+    return 0;
+}
+
+// I_x(a,a,0.5) = 0.5 by symmetry when both shape parameters are equal.
+#[test]
+fn test_beta_reg_symmetric_midpoint() -> i64 {
+    assert abs(_beta_reg(2.0, 2.0, 0.5) - 0.5) < 1.0e-9;
+    return 0;
+}
+
+// _beta_cf boundary guards: I_x(a,b) is 0 at x=0 and 1 at x=1.
+#[test]
+fn test_beta_reg_boundaries() -> i64 {
+    assert abs(_beta_reg(3.0, 4.0, 0.0) - 0.0) < 1.0e-12;
+    assert abs(_beta_reg(3.0, 4.0, 1.0) - 1.0) < 1.0e-12;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

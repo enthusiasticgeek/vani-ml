@@ -1,0 +1,24 @@
+[package]
+name    = "ml"
+version = "0.1.0"
+entry   = "src/lib.vani"
+authors = "enthusiasticgeek"
+license = "MIT"
+description = "Machine learning for vāṇी: classical ML first (linear/logistic regression, k-means, metrics), staged toward an autodiff + neural-net engine (v0.3.0+). See kosh-index/ROADMAP.md's 'vani-ml scoping breakdown'."
+registry = "kosh"
+
+[deps]
+# v0.1.0 (classical ML) needs both of these. Vendored 2026-07-25 via
+# `vanic vendor` (which copied from the local sibling checkouts into
+# vendor/<name>/); path rewritten to ./vendor/<name> by hand afterward to
+# match every other package's committed vani.toml (vani-optimize's,
+# vani-algebra's) -- `vanic vendor` itself doesn't rewrite the source path.
+probability = { path = "./vendor/probability", version = "^0.4.2" }
+optimize    = { path = "./vendor/optimize", version = "^0.1.4" }
+
+# v0.3.0+ (autodiff core / layers) will add:
+#   matrix = { path = "./vendor/matrix", version = "^0.2.0" }
+#   tensor = { path = "./vendor/tensor", version = "^0.1.0" }
+# Not declared yet -- only declare what the current phase actually uses,
+# matching this ecosystem's existing convention (see vani-symbolic's
+# vani.toml, vani-optimize's vani.toml).

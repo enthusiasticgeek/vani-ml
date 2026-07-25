@@ -1,0 +1,64 @@
+use "../src/lib.vani";
+
+// Two independent variables with unit variance and no covariance:
+// column 0 = [0,1,0,1], column 1 = [0,0,1,1] (a 2x2 factorial design).
+// Each has variance 4/3 (Bessel-corrected over n=4), covariance 0 (independent).
+#[test]
+fn test_cov_matrix_uncorrelated_columns() -> i64 {
+    let X: Vec<f64> = vec(0.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 1.0);
+    let cov: Vec<f64> = cov_matrix(ref X, 4, 2);
+    // Off-diagonal covariance should be ~0 (the two columns are uncorrelated
+    // by construction: an orthogonal 2-level factorial design).
+    assert abs(cov[1] - 0.0) < 1.0e-9;
+    assert abs(cov[2] - 0.0) < 1.0e-9;
+    // Diagonal variances should be equal and positive.
+    assert abs(cov[0] - cov[3]) < 1.0e-9;
+    assert cov[0] > 0.0;
+    return 0;
+}
+
+// Perfectly correlated columns (col1 = 2*col0) should show correlation 1.0.
+#[test]
+fn test_correlation_matrix_perfect_correlation() -> i64 {
+    let X: Vec<f64> = vec(1.0);
+    push(mut ref X, 2.0);
+    push(mut ref X, 2.0);
+    push(mut ref X, 4.0);
+    push(mut ref X, 3.0);
+    push(mut ref X, 6.0);
+    push(mut ref X, 4.0);
+    push(mut ref X, 8.0);
+    let corr: Vec<f64> = correlation_matrix(ref X, 4, 2);
+    assert abs(corr[0] - 1.0) < 1.0e-9;
+    assert abs(corr[3] - 1.0) < 1.0e-9;
+    assert abs(corr[1] - 1.0) < 1.0e-9;
+    assert abs(corr[2] - 1.0) < 1.0e-9;
+    return 0;
+}
+
+// correlation_matrix on 2 uncorrelated columns must match cov_matrix's
+// off-diagonal zero (correlation of independent variables is 0).
+#[test]
+fn test_correlation_matrix_uncorrelated() -> i64 {
+    let X: Vec<f64> = vec(0.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 0.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 1.0);
+    push(mut ref X, 1.0);
+    let corr: Vec<f64> = correlation_matrix(ref X, 4, 2);
+    assert abs(corr[1] - 0.0) < 1.0e-9;
+    assert abs(corr[0] - 1.0) < 1.0e-9;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

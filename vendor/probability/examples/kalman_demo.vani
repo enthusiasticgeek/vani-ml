@@ -1,0 +1,62 @@
+// 1D Kalman filter demo: tracking a slowly drifting position from noisy
+// sensor measurements.
+//
+// True motion: a random walk with small process noise (sigma=0.2/step) --
+// e.g. a buoy drifting on water, or a slowly wandering sensor baseline. The
+// sensor reports position with much larger Gaussian noise (sigma=1.0). The
+// filter fuses the noisy measurements with the motion model to produce a
+// smoother, more accurate position estimate than any single reading.
+//
+// Run with:  vanic run examples/kalman_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    print "=== 1D Kalman filter: tracking position under noisy measurement ===";
+
+    // State: [position]. F = 1 (a "random walk plus noisy sensor" tracker).
+    // Q must match the true process noise for the filter to trust the model
+    // and measurements in the right proportion.
+    let process_sigma: f64 = 0.2;
+    let measurement_sigma: f64 = 1.0;
+    let F: Vec<f64> = vec(1.0);
+    let Q: Vec<f64> = vec(process_sigma * process_sigma);
+    let H: Vec<f64> = vec(1.0);
+    let R: Vec<f64> = vec(measurement_sigma * measurement_sigma);
+
+    let n_steps: i64 = 15;
+
+    let true_pos: f64 = 0.0;
+    let x: Vec<f64> = vec(0.0);
+    let P: Vec<f64> = vec(10.0);
+
+    print "";
+    print "step   true       measured    filtered";
+
+    let i: i64 = 0;
+    while i < n_steps {
+        true_pos = true_pos + process_sigma * rand_normal();
+        let measurement: f64 = true_pos + measurement_sigma * rand_normal();
+        let z: Vec<f64> = vec(measurement);
+
+        let pred: Vec<f64> = kalman_predict(ref x, ref P, ref F, ref Q, 1);
+        let x_pred: Vec<f64> = vec(pred[0]);
+        let P_pred: Vec<f64> = vec(pred[1]);
+
+        let upd: Vec<f64> = kalman_update(ref x_pred, ref P_pred, ref z, ref H, ref R, 1, 1);
+        set(mut ref x, 0, upd[0]);
+        set(mut ref P, 0, upd[1]);
+
+        print i, "  ", true_pos, "  ", measurement, "  ", x[0];
+        i = i + 1;
+    }
+
+    print "";
+    print "Final filter uncertainty (P) =", P[0];
+    print "The filtered estimate should track the true position more closely";
+    print "than any single noisy measurement -- P converges to a steady-state";
+    print "value (it can't shrink to 0: fresh process noise is injected every";
+    print "step) that balances how much to trust the model vs. the sensor.";
+
+    return 0;
+}
