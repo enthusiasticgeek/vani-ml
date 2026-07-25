@@ -29,6 +29,7 @@
 // Prepends a column of 1s to X_flat (n_obs x n_pred -> n_obs x (n_pred+1),
 // new column 0 = intercept). NO #[wcet]: n_obs/n_pred are runtime values.
 // WCET formula: ~20 + n_obs * (1 + n_pred) * ~5 cycles.
+#[bounded_stack(bytes = 136)]
 fn linreg_add_intercept(X_flat: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
     let out: Vec<f64> = vec();
     let i: i64 = 0;
@@ -47,16 +48,19 @@ fn linreg_add_intercept(X_flat: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f6
 // Ordinary least squares fit: beta = (XtX)^-1 Xty. Pass an intercept
 // column yourself (see linreg_add_intercept) if you want one -- same
 // convention as the underlying probability::mlr_fit.
+#[bounded_stack(bytes = 792)]
 fn linreg_fit(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
     return probability::mlr_fit(X_flat, y, n_obs, n_pred);
 }
 
 // Predicted values: y_hat = X beta.
+#[bounded_stack(bytes = 336)]
 fn linreg_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
     return probability::mlr_predict(X_flat, beta, n_obs, n_pred);
 }
 
 // Coefficient of determination: 1 - SS_res/SS_tot.
+#[bounded_stack(bytes = 296)]
 fn linreg_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> f64 {
     return probability::mlr_r_squared(y, y_hat);
 }
@@ -79,6 +83,7 @@ fn linreg_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> f64 {
 // O(n_obs*n_pred) loop, not worth a whole dependency.
 // NO #[wcet]: n_obs/n_pred are runtime values.
 // WCET formula: ~20 + n_obs * n_pred * ~5 cycles.
+#[bounded_stack(bytes = 160)]
 fn _logreg_linear_combo(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
     let z: Vec<f64> = vec();
     let i: i64 = 0;
@@ -96,6 +101,7 @@ fn _logreg_linear_combo(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_
 }
 
 // Predicted probabilities: sigmoid(X beta).
+#[bounded_stack(bytes = 312)]
 fn logreg_predict_proba(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64) -> Vec<f64> {
     let z: Vec<f64> = _logreg_linear_combo(X_flat, beta, n_obs, n_pred);
     let p: Vec<f64> = vec();
@@ -108,6 +114,7 @@ fn logreg_predict_proba(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_
 }
 
 // Thresholded 0/1 predictions (threshold typically 0.5).
+#[bounded_stack(bytes = 472)]
 fn logreg_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: i64, threshold: f64) -> Vec<f64> {
     let p: Vec<f64> = logreg_predict_proba(X_flat, beta, n_obs, n_pred);
     let out: Vec<f64> = vec();
@@ -128,6 +135,7 @@ fn logreg_predict(X_flat: ref Vec<f64>, beta: ref Vec<f64>, n_obs: i64, n_pred: 
 // x0 is the starting beta (pass a zero vector of length n_pred if unsure).
 // NO #[wcet]: max_iter/n_obs/n_pred are runtime values.
 // WCET formula: ~20 + max_iter * O(n_obs * n_pred).
+#[bounded_stack(bytes = 592)]
 fn logreg_fit(
     X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_pred: i64,
     x0: ref Vec<f64>, alpha: f64, max_iter: i64
@@ -176,6 +184,7 @@ struct KMeansResult {
 // Squared Euclidean distance (no sqrt -- unnecessary for nearest-centroid
 // comparison or centroid averaging, and avoids the cost everywhere it's
 // called in a hot loop).
+#[bounded_stack(bytes = 120)]
 fn _kmeans_sqdist(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, c: i64, n_dim: i64) -> f64 {
     let s: f64 = 0.0;
     let d: i64 = 0;
@@ -187,6 +196,7 @@ fn _kmeans_sqdist(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, c: i6
     return s;
 }
 
+#[bounded_stack(bytes = 256)]
 fn _kmeans_nearest(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, k: i64, n_dim: i64) -> i64 {
     let best: i64 = 0;
     let best_d: f64 = _kmeans_sqdist(X_flat, row, centroids, 0, n_dim);
@@ -202,6 +212,7 @@ fn _kmeans_nearest(X_flat: ref Vec<f64>, row: i64, centroids: ref Vec<f64>, k: i
     return best;
 }
 
+#[bounded_stack(bytes = 74)]
 fn _kmeans_i64_contains(xs: ref Vec<i64>, val: i64) -> bool {
     let n: i64 = len(xs) as i64;
     let i: i64 = 0;
@@ -224,6 +235,7 @@ fn _kmeans_i64_contains(xs: ref Vec<i64>, val: i64) -> bool {
 // worst case, though vanishingly unlikely to loop more than a handful of
 // times in practice for k << n_obs).
 // WCET formula: ~40 + max_iter * O(n_obs * k * n_dim).
+#[bounded_stack(bytes = 755)]
 fn kmeans_fit(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64, max_iter: i64, seed: i64) -> KMeansResult {
     let _seeded: i64 = seed_rng(seed as u64);
 
@@ -311,6 +323,7 @@ fn kmeans_fit(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64, max_iter: i6
 
 // Assigns each row of X_flat to the nearest of an already-fit set of
 // centroids (e.g. on new/held-out data).
+#[bounded_stack(bytes = 392)]
 fn kmeans_predict(X_flat: ref Vec<f64>, centroids: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64) -> Vec<i64> {
     let out: Vec<i64> = vec();
     let i: i64 = 0;
@@ -324,6 +337,7 @@ fn kmeans_predict(X_flat: ref Vec<f64>, centroids: ref Vec<f64>, n_obs: i64, n_d
 // Inertia (within-cluster sum of squared distances to the assigned
 // centroid) -- the standard k-means objective value, useful for
 // comparing different k or different random inits.
+#[bounded_stack(bytes = 232)]
 fn kmeans_inertia(X_flat: ref Vec<f64>, assignments: ref Vec<i64>, centroids: ref Vec<f64>, n_obs: i64, n_dim: i64) -> f64 {
     let total: f64 = 0.0;
     let i: i64 = 0;
@@ -350,6 +364,7 @@ struct TrainTestSplit {
 // split reproducible -- same seed + same data -> same split.
 // NO #[wcet]: n_obs/n_dim are runtime values.
 // WCET formula: ~30 + n_obs * (1 + n_dim) * ~5 cycles.
+#[bounded_stack(bytes = 336)]
 fn train_test_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i64, test_frac: f64, seed: i64) -> TrainTestSplit {
     let _seeded: i64 = seed_rng(seed as u64);
     let idx: Vec<i64> = vec();
@@ -403,6 +418,7 @@ fn train_test_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i6
 // ── Core metrics ─────────────────────────────────────────────────────────
 // Binary-classification metrics assume labels in {0.0, 1.0}.
 
+#[bounded_stack(bytes = 104)]
 fn mse(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let n: i64 = len(y_true) as i64;
     let s: f64 = 0.0;
@@ -415,6 +431,7 @@ fn mse(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     return s / (n as f64);
 }
 
+#[bounded_stack(bytes = 96)]
 fn accuracy(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let n: i64 = len(y_true) as i64;
     let correct: i64 = 0;
@@ -429,6 +446,7 @@ fn accuracy(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
 // TP / (TP + FP). Returns 0.0 if no positive predictions were made
 // (avoids a division by zero; a defensible convention -- scikit-learn
 // does the same with a warning).
+#[bounded_stack(bytes = 112)]
 fn precision(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let n: i64 = len(y_true) as i64;
     let tp: i64 = 0;
@@ -445,6 +463,7 @@ fn precision(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
 }
 
 // TP / (TP + FN). Returns 0.0 if there are no actual positives.
+#[bounded_stack(bytes = 112)]
 fn recall(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let n: i64 = len(y_true) as i64;
     let tp: i64 = 0;
@@ -461,6 +480,7 @@ fn recall(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
 }
 
 // Harmonic mean of precision and recall. Returns 0.0 if both are 0.
+#[bounded_stack(bytes = 192)]
 fn f1_score(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let p: f64 = precision(y_true, y_pred);
     let r: f64 = recall(y_true, y_pred);

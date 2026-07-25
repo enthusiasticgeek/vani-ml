@@ -7,21 +7,44 @@
 
 ---
 
-## v0.1.0 — Classical ML (not started)
+## v0.1.0 — Classical ML ✅ implemented 2026-07-25
 
 Depends on: vani-probability (^0.4.2, published), vani-optimize (^0.1.4, published).
-Not yet vendored — run `vanic vendor` before first build.
+Vendored via `vanic vendor`.
 
-- [ ] Linear regression — thin wrapper over vani-probability's existing MLR
-- [ ] Logistic regression — cross-entropy loss + vani-optimize's gradient descent
-      (fixed-step or Armijo-backtracking)
-- [ ] k-means clustering — new implementation, no existing package covers this
-- [ ] Train/test split
-- [ ] Core metrics: accuracy, MSE, precision/recall
-- [ ] Tests: cross-check regression/logistic-regression against known reference
-      values (e.g. sklearn or textbook cases), same discipline as the rest of
-      this ecosystem — not just hand-picked examples
-- [ ] Example(s) in `examples/`
+- [x] Linear regression — `linreg_add_intercept`/`linreg_fit`/`linreg_predict`/
+      `linreg_r_squared`, thin wrappers over `probability::mlr_*`. Test:
+      exact-fit recovery on a noise-free synthetic dataset.
+- [x] Logistic regression — `logreg_fit`/`logreg_predict_proba`/`logreg_predict`,
+      cross-entropy loss. **Not** built on vani-optimize's
+      `gradient_descent_fixed`/`backtracking` — their fixed
+      `fn(ref Vec<f64>, i64) -> f64` objective/gradient signature can't carry
+      the training data through without a ref-capturing closure (unsupported,
+      compiler path-D). Own small dedicated gradient-descent loop instead,
+      same algorithm shape. Test: converges to perfect separation on a
+      linearly-separable 1D dataset.
+- [x] k-means clustering — `kmeans_fit`/`kmeans_predict`/`kmeans_inertia` +
+      `KMeansResult`, Lloyd's algorithm, random-point init, seeded via
+      `seed_rng`/`rand_in_range`. Genuinely new code, no existing kosh
+      package covers this. Test: exact label/centroid/inertia recovery on
+      two well-separated 2D clusters.
+- [x] Train/test split — `train_test_split` + `TrainTestSplit`, seeded
+      Fisher-Yates shuffle. Test: split-size and partition-sum invariants.
+- [x] Core metrics — `mse`/`accuracy`/`precision`/`recall`/`f1_score`. Test:
+      hand-computed confusion matrix, exact expected values.
+- [x] Tests: 4 files under `tests/`, all pass `vanic test` (LLVM backend),
+      full `vanic check` SMT verification, and `vanic audit-safety`
+      (`#[bounded_stack]` coverage complete on all 20 src functions).
+- [x] Example: `examples/ml_demo.vani`, verified on both LLVM and C backends.
+
+**Found along the way**: a real `vanic` LLVM-backend crash on a standalone
+unary-minus float literal (e.g. `-3.0` as a `vec()` argument) — filed
+upstream as BUG-6 in `vani-compiler/docs/TODO_CURRENT.md`, not fixed.
+Worked around with `0.0 - 3.0` throughout, per the existing "no unary
+minus" convention.
+
+**Not yet done**: `vanic publish` — stopping here since publishing is a
+shared/irreversible action; get an explicit go-ahead before publishing.
 
 ## v0.2.0 — Data utilities (not started)
 

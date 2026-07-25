@@ -1,0 +1,48 @@
+// A quick tour of vani-ml v0.1.0: linear regression, logistic regression,
+// and k-means, on small synthetic datasets.
+// Run with:  vanic run examples/ml_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // ── Linear regression: y = 5 + 2*x1 + 3*x2 ──────────────────────────
+    let X: Vec<f64> = vec(1.0, 2.0, 2.0, 1.0, 3.0, 4.0, 4.0, 3.0, 5.0, 5.0);
+    let y: Vec<f64> = vec(13.0, 12.0, 23.0, 22.0, 30.0);
+    let Xi: Vec<f64> = linreg_add_intercept(ref X, 5, 2);
+    let beta: Vec<f64> = linreg_fit(ref Xi, ref y, 5, 3);
+    print "linear regression beta (expect ~5, ~2, ~3):";
+    print beta[0];
+    print beta[1];
+    print beta[2];
+
+    let y_hat: Vec<f64> = linreg_predict(ref Xi, ref beta, 5, 3);
+    print "R^2 (expect ~1.0):";
+    print linreg_r_squared(ref y, ref y_hat);
+
+    // ── Logistic regression: separates x < 0 from x > 0 ─────────────────
+    let x1: Vec<f64> = vec(0.0 - 3.0, 0.0 - 2.0, 0.0 - 1.0, 0.0 - 0.5, 0.5, 1.0, 2.0, 3.0);
+    let yl: Vec<f64> = vec(0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+    let Xr: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < 8 {
+        push(mut ref Xr, x1[i]);
+        i = i + 1;
+    }
+    let Xri: Vec<f64> = linreg_add_intercept(ref Xr, 8, 1);
+    let x0: Vec<f64> = vec(0.0, 0.0);
+    let lbeta: Vec<f64> = logreg_fit(ref Xri, ref yl, 8, 2, ref x0, 0.1, 2000);
+    let preds: Vec<f64> = logreg_predict(ref Xri, ref lbeta, 8, 2, 0.5);
+    print "logistic regression accuracy (expect 1.0):";
+    print accuracy(ref yl, ref preds);
+
+    // ── K-means: two well-separated 2D clusters ──────────────────────────
+    let Xk: Vec<f64> = vec(
+        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+        10.0, 10.0, 11.0, 10.0, 10.0, 11.0, 11.0, 11.0
+    );
+    let result: KMeansResult = kmeans_fit(ref Xk, 8, 2, 2, 50, 42);
+    print "k-means inertia (expect ~4.0):";
+    print kmeans_inertia(ref Xk, ref result.assignments, ref result.centroids, 8, 2);
+
+    return 0;
+}

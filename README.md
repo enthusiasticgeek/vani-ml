@@ -6,8 +6,10 @@ breakdown, and risk notes live in
 [kosh-index/ROADMAP.md](https://github.com/enthusiasticgeek/kosh-index/blob/main/ROADMAP.md#planned-ml-tier-scoped-2026-07-25) --
 this README tracks only what's actually implemented.
 
-**Status (2026-07-25): scaffolded, no functions implemented yet.** See TODO.md for
-the phase checklist.
+**Status (2026-07-25): v0.1.0 implemented and passing** (4 test files under
+`vanic test`, LLVM and C backends both verified on the example, full
+`vanic check` SMT verification clean, `vanic audit-safety` reports full
+`#[bounded_stack]` coverage). See TODO.md for the phase checklist.
 
 ## Why classical ML first
 
@@ -37,20 +39,48 @@ vanic add ml
 vanic build
 ```
 
-## Design note: autodiff without ref-capturing closures
+## Design note: no ref-capturing closures -- and it already mattered in v0.1.0
 
 vāṇी's closures support move/Copy captures (shipped 2026-07-15) but not
 ref-capturing closures -- that's compiler path-D, deferred indefinitely (see
-`vani-compiler/docs/missing_features.md`, "Lifetime variables"). The autodiff core
-(v0.3.0) does not need it: it uses the same flat-arena pattern `vani-symbolic`
-already uses for its expression tree (`Vec<Node>` + `i64` child indices), with
-gradient buffers threaded through as explicit `mut ref Vec<f64>` arguments instead
-of captured. See ROADMAP.md for the full writeup of why this was resolved without
-a compiler change.
+`vani-compiler/docs/missing_features.md`, "Lifetime variables"). This wasn't
+just a v0.3.0-autodiff concern: it already bit `logreg_fit` in v0.1.0.
+`vani-optimize`'s `gradient_descent_fixed`/`gradient_descent_backtracking`
+take fixed `fn(ref Vec<f64>, i64) -> f64` objective/gradient function
+pointers -- there's no way to thread the training data (`X_flat`, `y`)
+through one of those without a ref-capturing closure. So `logreg_fit` has
+its own small dedicated gradient-descent loop instead, same algorithm
+shape, specialized directly to `(X_flat, y, beta)`. The autodiff core
+(v0.3.0) will hit the same wall in a bigger way and uses the same kind of
+workaround: the flat-arena pattern `vani-symbolic` uses for its expression
+tree (`Vec<Node>` + `i64` child indices), gradient buffers threaded through
+as explicit `mut ref Vec<f64>` arguments instead of captured. See
+ROADMAP.md for the full writeup of why this was resolved without a
+compiler change.
 
-## What's included so far
+## What's included (v0.1.0)
 
-Nothing yet -- v0.1.0 is scoped, not implemented. See TODO.md.
+| Module | Functions |
+|---|---|
+| Linear regression | `linreg_add_intercept`, `linreg_fit`, `linreg_predict`, `linreg_r_squared` -- thin wrappers over `probability::mlr_*` |
+| Logistic regression | `logreg_fit` (own gradient-descent loop, see design note above), `logreg_predict_proba`, `logreg_predict` |
+| K-means clustering | `kmeans_fit`, `kmeans_predict`, `kmeans_inertia`, `KMeansResult` -- Lloyd's algorithm, random-point init, genuinely new code (no existing kosh package covers this) |
+| Train/test split | `train_test_split`, `TrainTestSplit` -- seeded Fisher-Yates shuffle |
+| Core metrics | `mse`, `accuracy`, `precision`, `recall`, `f1_score` (binary labels `{0.0, 1.0}`) |
+
+All `X_flat` arguments are row-major `n_obs x n_pred` (or `n_obs x n_dim` for
+k-means), matching `vani-matrix`/`vani-probability`/`vani-tensor`'s shared layout.
+See `examples/ml_demo.vani` for an end-to-end tour.
+
+## Known upstream issue found while building this
+
+While writing `tests/test_logreg.vani`, a standalone unary-minus float literal
+(e.g. `-3.0` as a `vec()` argument) panicked the `vanic` LLVM backend at codegen,
+even though `vanic check` accepts it cleanly. Filed upstream as BUG-6 in
+`vani-compiler/docs/TODO_CURRENT.md`, not fixed. Worked around throughout this
+repo by writing `0.0 - 3.0` instead of `-3.0`, consistent with this ecosystem's
+existing "no unary minus" convention (see `docs/reference_vani_language_notes.md`-style
+notes in the wider project).
 
 ## License
 
