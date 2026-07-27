@@ -17,7 +17,7 @@
 //
 // IMPORTANT -- do NOT reimplement vāṇी compiler builtins already used
 // throughout this file: push len vec sqrt exp log f64_sigmoid abs
-// seed_rng rand_in_range rand_in_range_f64 vec_swap vec_mean
+// seed_rng rand_in_range rand_in_range_f64 vec_swap vec_mean i64_min
 
 // ── Linear regression ────────────────────────────────────────────────────
 // Thin wrappers over vani-probability's MLR (ordinary least squares via
@@ -486,4 +486,267 @@ fn f1_score(y_true: ref Vec<f64>, y_pred: ref Vec<f64>) -> f64 {
     let r: f64 = recall(y_true, y_pred);
     if p + r < 1.0e-15 { return 0.0; }
     return 2.0 * p * r / (p + r);
+}
+
+// ── v0.2.0: Data utilities ───────────────────────────────────────────────
+// Feature scaling, one-hot encoding, a Dataset bundle struct, and k-fold
+// cross-validation splitting. Scaling uses a fit/apply split (not a
+// single all-in-one transform) so a caller can fit on training data and
+// apply the SAME parameters to held-out test data -- fitting separately
+// on train and test would leak test-set statistics into the transform,
+// the standard reason real ML libraries split it this way too.
+// Cross-validation here means SPLITTING (k_fold_split, mirroring
+// train_test_split's own scope), not a full train/eval harness: this
+// package has no generic "trainable model" abstraction (linreg/logreg/
+// kmeans each have distinct fit signatures), so a caller loops over
+// k_fold_split's `fold` parameter themselves and calls whichever model's
+// fit/predict they want per iteration -- same "caller loops themselves,
+// no closures needed" convention as vani-vectorcalc's line integrals.
+
+// Per-column mean and standard deviation (population, i.e. divided by
+// n_obs not n_obs-1, since this is a data-preprocessing statistic, not a
+// sample-variance estimate) from a fit pass over X_flat, reusable via
+// standardize_apply on any data with the same n_dim (e.g. a held-out test
+// set, using the TRAINING set's stats).
+struct StandardScaler {
+    means: Vec<f64>,
+    stds: Vec<f64>,
+}
+
+// WCET formula: ~20 + n_obs * n_dim * ~10 cycles (two passes over the
+// data). NO #[wcet]: n_obs/n_dim are runtime values.
+#[bounded_stack(bytes = 240)]
+fn standardize_fit(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64) -> StandardScaler {
+    let means: Vec<f64> = vec();
+    let d0: i64 = 0;
+    while d0 < n_dim {
+        let s: f64 = 0.0;
+        let i0: i64 = 0;
+        while i0 < n_obs {
+            s = s + X_flat[i0 * n_dim + d0];
+            i0 = i0 + 1;
+        }
+        push(mut ref means, s / (n_obs as f64));
+        d0 = d0 + 1;
+    }
+    let stds: Vec<f64> = vec();
+    let d1: i64 = 0;
+    while d1 < n_dim {
+        let ss: f64 = 0.0;
+        let i1: i64 = 0;
+        while i1 < n_obs {
+            let dev: f64 = X_flat[i1 * n_dim + d1] - means[d1];
+            ss = ss + dev * dev;
+            i1 = i1 + 1;
+        }
+        push(mut ref stds, sqrt(ss / (n_obs as f64)));
+        d1 = d1 + 1;
+    }
+    return StandardScaler { means: means, stds: stds };
+}
+
+// Applies a fitted StandardScaler: out[i,d] = (X[i,d] - mean[d]) /
+// std[d]. A constant column (std ~ 0) is only centered, not scaled (dividing
+// by ~0 would blow up to +-inf for a column that carries no variance
+// information anyway) -- same guard convention as this package's own
+// weighted_variance-style near-zero-denominator checks elsewhere in the
+// Kosh ecosystem (see vani-probability's weighted_variance).
+// WCET formula: ~20 + n_obs * n_dim * ~10 cycles.
+#[bounded_stack(bytes = 160)]
+fn standardize_apply(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64, scaler: ref StandardScaler) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        let d: i64 = 0;
+        while d < n_dim {
+            let dev: f64 = X_flat[i * n_dim + d] - scaler.means[d];
+            if scaler.stds[d] < 1.0e-15 {
+                push(mut ref out, dev);
+            } else {
+                push(mut ref out, dev / scaler.stds[d]);
+            }
+            d = d + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Per-column min and max from a fit pass over X_flat, reusable via
+// normalize_apply on any data with the same n_dim (same train/test
+// rationale as StandardScaler).
+struct MinMaxScaler {
+    mins: Vec<f64>,
+    maxs: Vec<f64>,
+}
+
+// WCET formula: ~20 + n_obs * n_dim * ~10 cycles.
+#[bounded_stack(bytes = 232)]
+fn normalize_fit(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64) -> MinMaxScaler {
+    let mins: Vec<f64> = vec();
+    let maxs: Vec<f64> = vec();
+    let d: i64 = 0;
+    while d < n_dim {
+        let mn: f64 = X_flat[d];
+        let mx: f64 = X_flat[d];
+        let i: i64 = 1;
+        while i < n_obs {
+            let v: f64 = X_flat[i * n_dim + d];
+            if v < mn { mn = v; }
+            if v > mx { mx = v; }
+            i = i + 1;
+        }
+        push(mut ref mins, mn);
+        push(mut ref maxs, mx);
+        d = d + 1;
+    }
+    return MinMaxScaler { mins: mins, maxs: maxs };
+}
+
+// Applies a fitted MinMaxScaler: out[i,d] = (X[i,d] - min[d]) /
+// (max[d] - min[d]), mapping the FIT data's own range to [0,1] (data
+// scaled from a different range, e.g. a test set with values outside the
+// training range, can land outside [0,1] -- expected, not a bug). A
+// constant column (max ~ min) maps to 0.0 everywhere rather than dividing
+// by ~0.
+// WCET formula: ~20 + n_obs * n_dim * ~10 cycles.
+#[bounded_stack(bytes = 168)]
+fn normalize_apply(X_flat: ref Vec<f64>, n_obs: i64, n_dim: i64, scaler: ref MinMaxScaler) -> Vec<f64> {
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_obs {
+        let d: i64 = 0;
+        while d < n_dim {
+            let range: f64 = scaler.maxs[d] - scaler.mins[d];
+            if range < 1.0e-15 {
+                push(mut ref out, 0.0);
+            } else {
+                push(mut ref out, (X_flat[i * n_dim + d] - scaler.mins[d]) / range);
+            }
+            d = d + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// One-hot encoding: row-major (len(labels) x n_classes) Vec<f64>, a 1.0
+// at each row's label index and 0.0 elsewhere. Caller-trust: every label
+// in [0, n_classes) -- not checked at runtime, same convention as every
+// other unenforced range assumption in this ecosystem.
+// WCET formula: ~20 + len(labels) * n_classes * ~5 cycles.
+#[bounded_stack(bytes = 152)]
+fn one_hot_encode(labels: ref Vec<i64>, n_classes: i64) -> Vec<f64> {
+    let n: i64 = len(labels) as i64;
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let c: i64 = 0;
+        while c < n_classes {
+            if c == labels[i] {
+                push(mut ref out, 1.0);
+            } else {
+                push(mut ref out, 0.0);
+            }
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Bundles a feature matrix and its labels together, matching vani-matrix/
+// vani-tensor's row-major convention (this package's own CONVENTION note
+// at the top of the file). A thin bundle, not a new abstraction -- lets
+// k_fold_split (and any future function that composes multiple datasets)
+// take/return one value instead of four.
+struct Dataset {
+    X_flat: Vec<f64>,
+    y: Vec<f64>,
+    n_obs: i64,
+    n_dim: i64,
+}
+
+// One fold's train/test partition, same shape as TrainTestSplit.
+struct KFoldSplit {
+    X_train: Vec<f64>,
+    y_train: Vec<f64>,
+    n_train: i64,
+    X_test: Vec<f64>,
+    y_test: Vec<f64>,
+    n_test: i64,
+}
+
+// k-fold split: partitions X_flat/y into k roughly-equal folds (any
+// remainder from n_obs not dividing evenly by k is distributed one-per-
+// fold across the first `n_obs % k` folds, so fold sizes differ by at
+// most 1) via the same seeded Fisher-Yates shuffle as train_test_split,
+// then returns fold `fold`'s test partition (that fold) and train
+// partition (every other fold). Calling this k times with fold=0..k-1
+// and the SAME seed reproduces the identical underlying shuffle each
+// time (seed_rng fully resets the RNG state), so the k folds are a
+// genuine partition of the data across those calls, not k independent
+// random subsets. `fold` must be in [0, k).
+// NO #[wcet]: n_obs/n_dim/k are runtime values.
+// WCET formula: ~30 + n_obs * (1 + n_dim) * ~5 cycles, same order as
+// train_test_split.
+#[bounded_stack(bytes = 400)]
+fn k_fold_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i64, k: i64, fold: i64, seed: i64) -> KFoldSplit {
+    assert fold >= 0 && fold < k;
+    let _seeded: i64 = seed_rng(seed as u64);
+    let idx: Vec<i64> = vec();
+    let i0: i64 = 0;
+    while i0 < n_obs {
+        push(mut ref idx, i0);
+        i0 = i0 + 1;
+    }
+    let p: i64 = n_obs - 1;
+    while p > 0 {
+        let r: i64 = rand_in_range(0, p + 1);
+        vec_swap(mut ref idx, p, r);
+        p = p - 1;
+    }
+
+    let base: i64 = n_obs / k;
+    let rem: i64 = n_obs % k;
+    let fold_size: i64 = base;
+    if fold < rem {
+        fold_size = base + 1;
+    }
+    let start: i64 = fold * base + i64_min(fold, rem);
+    let end: i64 = start + fold_size;
+
+    let X_train: Vec<f64> = vec();
+    let y_train: Vec<f64> = vec();
+    let X_test: Vec<f64> = vec();
+    let y_test: Vec<f64> = vec();
+    let n_train: i64 = 0;
+    let n_test: i64 = 0;
+
+    let j: i64 = 0;
+    while j < n_obs {
+        let row: i64 = idx[j];
+        let d: i64 = 0;
+        if j >= start && j < end {
+            while d < n_dim {
+                push(mut ref X_test, X_flat[row * n_dim + d]);
+                d = d + 1;
+            }
+            push(mut ref y_test, y[row]);
+            n_test = n_test + 1;
+        } else {
+            while d < n_dim {
+                push(mut ref X_train, X_flat[row * n_dim + d]);
+                d = d + 1;
+            }
+            push(mut ref y_train, y[row]);
+            n_train = n_train + 1;
+        }
+        j = j + 1;
+    }
+
+    return KFoldSplit {
+        X_train: X_train, y_train: y_train, n_train: n_train,
+        X_test: X_test, y_test: y_test, n_test: n_test,
+    };
 }

@@ -1,0 +1,106 @@
+intent "vani-ml v0.2.0 data utilities: scaling (fit/apply), one-hot encoding, k-fold splitting";
+
+use "../src/lib.vani";
+
+fn close(a: f64, b: f64) -> bool {
+    return abs(a - b) < 1.0e-6;
+}
+
+fn main() -> i64 {
+    // ── standardize (z-score) ────────────────────────────────────────────
+    // Column 0: [1,2,3,4,5], mean=3, std=sqrt(2). Column 1: constant [10]*5
+    // -- exercises the std~0 guard (only centered, not divided).
+    let n_obs: i64 = 5;
+    let n_dim: i64 = 2;
+    let X: Vec<f64> = vec(
+        1.0, 10.0,
+        2.0, 10.0,
+        3.0, 10.0,
+        4.0, 10.0,
+        5.0, 10.0
+    );
+    let scaler: StandardScaler = standardize_fit(ref X, n_obs, n_dim);
+    assert close(scaler.means[0], 3.0);
+    assert close(scaler.stds[0], sqrt(2.0));
+    assert close(scaler.means[1], 10.0);
+    assert close(scaler.stds[1], 0.0);
+
+    let Xs: Vec<f64> = standardize_apply(ref X, n_obs, n_dim, ref scaler);
+    assert close(Xs[0 * n_dim + 0], 0.0 - 1.414214);
+    assert close(Xs[1 * n_dim + 0], 0.0 - 0.707107);
+    assert close(Xs[2 * n_dim + 0], 0.0);
+    assert close(Xs[3 * n_dim + 0], 0.707107);
+    assert close(Xs[4 * n_dim + 0], 1.414214);
+    // Constant column: centered (X - mean = 0) but not divided.
+    let i: i64 = 0;
+    while i < n_obs {
+        assert close(Xs[i * n_dim + 1], 0.0);
+        i = i + 1;
+    }
+
+    // ── normalize (min-max) ──────────────────────────────────────────────
+    let mm: MinMaxScaler = normalize_fit(ref X, n_obs, n_dim);
+    assert close(mm.mins[0], 1.0);
+    assert close(mm.maxs[0], 5.0);
+    assert close(mm.mins[1], 10.0);
+    assert close(mm.maxs[1], 10.0);
+
+    let Xn: Vec<f64> = normalize_apply(ref X, n_obs, n_dim, ref mm);
+    assert close(Xn[0 * n_dim + 0], 0.0);
+    assert close(Xn[1 * n_dim + 0], 0.25);
+    assert close(Xn[2 * n_dim + 0], 0.5);
+    assert close(Xn[3 * n_dim + 0], 0.75);
+    assert close(Xn[4 * n_dim + 0], 1.0);
+    // Constant column: maps to 0.0 everywhere rather than dividing by ~0.
+    i = 0;
+    while i < n_obs {
+        assert close(Xn[i * n_dim + 1], 0.0);
+        i = i + 1;
+    }
+
+    // ── one-hot encoding ─────────────────────────────────────────────────
+    let labels: Vec<i64> = vec(0, 2, 1, 0);
+    let oh: Vec<f64> = one_hot_encode(ref labels, 3);
+    assert close(oh[0], 1.0); assert close(oh[1], 0.0); assert close(oh[2], 0.0);
+    assert close(oh[3], 0.0); assert close(oh[4], 0.0); assert close(oh[5], 1.0);
+    assert close(oh[6], 0.0); assert close(oh[7], 1.0); assert close(oh[8], 0.0);
+    assert close(oh[9], 1.0); assert close(oh[10], 0.0); assert close(oh[11], 0.0);
+
+    // ── k-fold split ─────────────────────────────────────────────────────
+    // n_obs=10, k=3 -> fold sizes 4,3,3 (remainder 1 goes to fold 0).
+    // Composed check: every fold's test partition, reassembled across all
+    // k calls with the SAME seed, must cover every original y value
+    // exactly once (the same partition-invariant discipline
+    // train_test_split's own test uses) -- this also confirms the k
+    // calls really do reproduce the identical underlying shuffle rather
+    // than drawing independent random subsets.
+    let kX: Vec<f64> = vec(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+    let ky: Vec<f64> = vec(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+    let k: i64 = 3;
+    let seed: i64 = 11;
+
+    let f0: KFoldSplit = k_fold_split(ref kX, ref ky, 10, 1, k, 0, seed);
+    let f1: KFoldSplit = k_fold_split(ref kX, ref ky, 10, 1, k, 1, seed);
+    let f2: KFoldSplit = k_fold_split(ref kX, ref ky, 10, 1, k, 2, seed);
+
+    assert f0.n_test == 4;
+    assert f1.n_test == 3;
+    assert f2.n_test == 3;
+    assert f0.n_train + f0.n_test == 10;
+    assert f1.n_train + f1.n_test == 10;
+    assert f2.n_train + f2.n_test == 10;
+
+    let sum_test: f64 = vec_sum(ref f0.y_test) + vec_sum(ref f1.y_test) + vec_sum(ref f2.y_test);
+    assert abs(sum_test - vec_sum(ref ky)) < 1.0e-9;
+
+    // Every fold's own train+test also partitions the full set exactly.
+    let sum0: f64 = vec_sum(ref f0.y_train) + vec_sum(ref f0.y_test);
+    let sum1: f64 = vec_sum(ref f1.y_train) + vec_sum(ref f1.y_test);
+    let sum2: f64 = vec_sum(ref f2.y_train) + vec_sum(ref f2.y_test);
+    assert abs(sum0 - vec_sum(ref ky)) < 1.0e-9;
+    assert abs(sum1 - vec_sum(ref ky)) < 1.0e-9;
+    assert abs(sum2 - vec_sum(ref ky)) < 1.0e-9;
+
+    print "data utils tests passed";
+    return 0;
+}

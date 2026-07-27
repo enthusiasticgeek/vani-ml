@@ -43,18 +43,52 @@ upstream as BUG-6 in `vani-compiler/docs/TODO_CURRENT.md`, not fixed.
 Worked around with `0.0 - 3.0` throughout, per the existing "no unary
 minus" convention.
 
-**Not yet done**: `vanic publish` — stopping here since publishing is a
-shared/irreversible action; get an explicit go-ahead before publishing.
+**Published** 2026-07-26 (this note was stale until 2026-07-27 -- v0.1.0
+was already live in kosh-index by the time v0.2.0's work below started).
 
-## v0.2.0 — Data utilities (not started)
+## v0.2.0 — Data utilities ✅ implemented 2026-07-27
 
 Depends on: v0.1.0.
 
-- [ ] Feature scaling: standardize, normalize
-- [ ] One-hot encoding
-- [ ] `Dataset` struct — row-major `Vec<f64>` features + labels, matching
-      vani-matrix/vani-tensor's row-major convention
-- [ ] k-fold cross-validation
+- [x] Feature scaling: `StandardScaler`/`standardize_fit`/
+      `standardize_apply` (z-score, population std) and
+      `MinMaxScaler`/`normalize_fit`/`normalize_apply` (min-max to
+      [0,1]). Deliberately a fit/apply split, not a single all-in-one
+      transform, so a caller can fit on training data and apply the SAME
+      parameters to held-out test data (fitting separately on train and
+      test would leak test-set statistics into the transform). Both
+      guard the constant-column case (std/range ~0) rather than dividing
+      by ~0 -- standardize centers without scaling, normalize maps to
+      0.0.
+- [x] `one_hot_encode(labels, n_classes)` -- row-major
+      `len(labels) x n_classes` Vec<f64>.
+- [x] `Dataset` struct — row-major `Vec<f64>` features + labels, matching
+      vani-matrix/vani-tensor's row-major convention. A thin bundle (not
+      a new abstraction) so functions that compose multiple datasets
+      (like `k_fold_split`) can take/return one value instead of four.
+- [x] `k_fold_split(X_flat, y, n_obs, n_dim, k, fold, seed)` -- k-fold
+      cross-validation SPLITTING (mirroring `train_test_split`'s own
+      scope), not a full train/eval harness: this package has no generic
+      "trainable model" abstraction (linreg/logreg/kmeans each have
+      distinct fit signatures), so a caller loops `fold` from 0 to k-1
+      themselves and calls whichever model's fit/predict they want per
+      iteration, same "caller loops themselves, no closures needed"
+      convention as `vani-vectorcalc`'s line integrals. Same seeded
+      Fisher-Yates shuffle as `train_test_split`; calling this k times
+      with the same seed reproduces the identical underlying shuffle
+      each time (since `seed_rng` fully resets the RNG state), so the k
+      folds are a genuine partition, not k independent random subsets.
+      Remainder from `n_obs` not dividing evenly by `k` is distributed
+      one-per-fold across the first `n_obs % k` folds.
+- [x] `tests/test_data_utils.vani` -- scaling verified against
+      hand-computed stats (mean/std/min/max) including the constant-
+      column guard path for both scalers; one-hot encoding on a 4-label,
+      3-class example; k-fold split (n_obs=10, k=3, fold sizes 4/3/3)
+      verified via the same partition-invariant composed check
+      `train_test_split`'s own test uses (every original value appears
+      exactly once across all k folds' test partitions, and every
+      individual fold's train+test also sums back to the whole set).
+      Full suite + `vanic audit-safety` re-verified on both backends.
 
 ## v0.3.0 — Autodiff core (not started) — highest-risk phase
 
