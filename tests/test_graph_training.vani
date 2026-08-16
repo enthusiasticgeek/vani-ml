@@ -1,0 +1,98 @@
+use "../src/lib.vani";
+
+// v0.6.0+: the "prove the whole v0.3.0-v0.5.0 stack composes correctly
+// end to end" test. Trains a 2-2-1 MLP (dense->sigmoid hidden layer,
+// dense->sigmoid output, binary cross-entropy loss, Adam optimizer) on
+// XOR -- the canonical toy problem a single dense+sigmoid layer
+// PROVABLY cannot solve (XOR isn't linearly separable), so correctly
+// classifying all 4 examples after training is real evidence the hidden
+// layer's gradient is actually flowing correctly, not just that some
+// loss number went down.
+//
+// All 9 trainable params (4 layer-1 weights, 2 layer-1 biases, 2
+// layer-2 weights, 1 layer-2 bias) live in ONE arena, and the SAME
+// param indices are reused across all 4 training examples' forward
+// paths -- this is the DAG/shared-node-accumulation property
+// tests/test_graph_core.vani validated in isolation, now exercised for
+// real: graph_backward must correctly SUM each param's gradient
+// contribution from all 4 examples, not just the last one evaluated.
+
+// Builds one XOR example's forward path (2 inputs -> 2 hidden units ->
+// 1 output, sigmoid after each dense layer) and returns the output
+// node's arena index. Factored out purely to keep the #[test] below
+// from repeating this 4 times inline.
+fn _xor_forward_one(
+    arena: mut ref Vec<GraphNode>, x0: f64, x1: f64,
+    w1_00: i64, w1_01: i64, w1_10: i64, w1_11: i64, b1_0: i64, b1_1: i64,
+    w2_0: i64, w2_1: i64, b2: i64
+) -> i64 {
+    let in0: i64 = graph_const(arena, x0);
+    let in1: i64 = graph_const(arena, x1);
+    let inputs: Vec<i64> = vec(in0, in1);
+
+    let w1a: Vec<i64> = vec(w1_00, w1_01);
+    let z0: i64 = graph_dense(arena, ref inputs, ref w1a, b1_0);
+    let h0: i64 = graph_sigmoid(arena, z0);
+
+    let w1b: Vec<i64> = vec(w1_10, w1_11);
+    let z1: i64 = graph_dense(arena, ref inputs, ref w1b, b1_1);
+    let h1: i64 = graph_sigmoid(arena, z1);
+
+    let hidden: Vec<i64> = vec(h0, h1);
+    let w2: Vec<i64> = vec(w2_0, w2_1);
+    let zout: i64 = graph_dense(arena, ref hidden, ref w2, b2);
+    return graph_sigmoid(arena, zout);
+}
+
+#[test]
+fn test_xor_mlp_trains_correctly() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+
+    // Asymmetric initial weights -- identical hidden units would give
+    // the two hidden neurons identical gradients forever (a classic MLP
+    // symmetry trap), so they're deliberately different from the start.
+    let w1_00: i64 = graph_param(mut ref arena, 0.5);
+    let w1_01: i64 = graph_param(mut ref arena, 0.0 - 0.5);
+    let w1_10: i64 = graph_param(mut ref arena, 0.0 - 0.5);
+    let w1_11: i64 = graph_param(mut ref arena, 0.5);
+    let b1_0: i64 = graph_param(mut ref arena, 0.1);
+    let b1_1: i64 = graph_param(mut ref arena, 0.0 - 0.1);
+    let w2_0: i64 = graph_param(mut ref arena, 0.5);
+    let w2_1: i64 = graph_param(mut ref arena, 0.5);
+    let b2: i64 = graph_param(mut ref arena, 0.0);
+
+    let out0: i64 = _xor_forward_one(mut ref arena, 0.0, 0.0, w1_00, w1_01, w1_10, w1_11, b1_0, b1_1, w2_0, w2_1, b2);
+    let out1: i64 = _xor_forward_one(mut ref arena, 0.0, 1.0, w1_00, w1_01, w1_10, w1_11, b1_0, b1_1, w2_0, w2_1, b2);
+    let out2: i64 = _xor_forward_one(mut ref arena, 1.0, 0.0, w1_00, w1_01, w1_10, w1_11, b1_0, b1_1, w2_0, w2_1, b2);
+    let out3: i64 = _xor_forward_one(mut ref arena, 1.0, 1.0, w1_00, w1_01, w1_10, w1_11, b1_0, b1_1, w2_0, w2_1, b2);
+
+    let preds: Vec<i64> = vec(out0, out1, out2, out3);
+    let targets: Vec<f64> = vec(0.0, 1.0, 1.0, 0.0);
+    let loss: i64 = graph_binary_cross_entropy_loss(mut ref arena, ref preds, ref targets);
+    let params: Vec<i64> = vec(w1_00, w1_01, w1_10, w1_11, b1_0, b1_1, w2_0, w2_1, b2);
+
+    let initial_values: Vec<f64> = graph_forward(ref arena);
+    let initial_loss: f64 = initial_values[loss];
+
+    let state: AdamState = adam_state_new(9);
+    let epoch: i64 = 0;
+    while epoch < 3000 {
+        let values: Vec<f64> = graph_forward(ref arena);
+        let grads: Vec<f64> = graph_backward(ref arena, ref values, loss);
+        state = graph_adam_step(mut ref arena, ref params, ref grads, ref state, 0.1, 0.9, 0.999, 1.0e-8);
+        epoch = epoch + 1;
+    }
+
+    let final_values: Vec<f64> = graph_forward(ref arena);
+    // Loss must have dropped substantially -- not just "changed".
+    assert final_values[loss] < initial_loss * 0.1;
+    // Correctly classifies every XOR example (0.5 threshold, same
+    // convention as this package's existing logreg_predict).
+    assert final_values[out0] < 0.5;
+    assert final_values[out1] > 0.5;
+    assert final_values[out2] > 0.5;
+    assert final_values[out3] < 0.5;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

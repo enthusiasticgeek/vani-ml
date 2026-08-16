@@ -258,13 +258,53 @@ Full verification: `vanic audit-safety` reports full `#[bounded_stack]`/
 suite (all 9 test files, both backends) and all 4 examples (both
 backends) pass.
 
-## v0.6.0+ — Training-loop utilities (optional/stretch, not started)
+## v0.6.0+ — Training-loop utilities ✅ implemented 2026-08-16 (optional/stretch)
 
 Depends on: v0.1.0-v0.5.0.
 
-- [ ] Training-loop helper, batching
-- [ ] A couple of worked small-MLP examples end-to-end
-- [ ] Open-ended — revisit scope once the core phases are shipped and actually used
+- [x] Training-loop helper, batching — deliberately scoped down to
+      `shuffled_indices(n, seed)`, the exact seeded Fisher-Yates
+      permutation already duplicated inside `train_test_split`/
+      `k_fold_split`, factored out as a standalone reusable utility (the
+      existing two functions are left as-is, not retrofitted, to keep
+      this phase's diff scoped to what it's actually adding). A
+      genuinely GENERIC trainer function — one that takes a
+      caller-supplied "build the graph" step — would need a
+      ref-capturing closure to thread the caller's own data through, the
+      same wall v0.1.0's `logreg_fit` and v0.3.0 already hit; not
+      revisited here since nothing about this phase's own scope requires
+      solving that problem.
+- [x] **One** worked small-MLP example, deliberately narrowed from "a
+      couple" — a 2-2-1 MLP (dense→sigmoid hidden layer, dense→sigmoid
+      output, binary cross-entropy loss, Adam optimizer) trained on XOR,
+      the canonical toy problem a single dense+sigmoid layer *provably*
+      cannot solve (not linearly separable). All 9 trainable params
+      (4 layer-1 weights, 2 layer-1 biases, 2 layer-2 weights, 1 layer-2
+      bias) live in ONE arena and are reused across all 4 training
+      examples' forward paths — real exercise of the DAG/shared-node
+      gradient-accumulation property `tests/test_graph_core.vani`
+      validated in isolation, this time for real (`graph_backward` must
+      correctly SUM each param's gradient contribution across all 4
+      examples). `tests/test_graph_training.vani` trains for 3000 Adam
+      epochs and asserts every example is correctly classified
+      (0.5-threshold, same convention as `logreg_predict`) plus the loss
+      dropped to under 10% of its starting value.
+      `examples/xor_mlp_demo.vani` runs the same training and prints
+      before/after loss and predictions — loss goes from ~0.72 to
+      ~0.0001, predictions land at ~0.0001/~0.9999/~0.9999/~0.0001
+      against targets 0/1/1/0, identical on both backends. A second toy
+      problem was considered and dropped: nothing it could validate that
+      XOR doesn't already cover more convincingly.
+- [x] Scope, not left open-ended: this phase is now considered CLOSED,
+      not "revisit once used" — a real, passing, cross-backend-verified
+      MLP training loop is the concrete "actually used" signal the
+      original scope note was waiting for.
+
+Full verification: `vanic audit-safety` reports full `#[bounded_stack]`/
+`#[wcet]` coverage (51 functions checked, 0 gaps). Full `vanic test`
+suite (all 10 test files, both backends) and all 5 examples (both
+backends) pass. This closes out vani-ml's entire originally-scoped
+roadmap (v0.1.0 through v0.6.0+) in one session.
 
 ---
 

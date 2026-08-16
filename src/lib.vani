@@ -1308,3 +1308,52 @@ fn graph_adam_step(arena: mut ref Vec<GraphNode>, params: ref Vec<i64>, grads: r
     }
     return AdamState { m: new_m, v: new_v, t: t_new };
 }
+
+// ── v0.6.0+: Training-loop utilities (stretch) ───────────────────────────
+//
+// Scoped narrowly on purpose, per this phase's own "open-ended, revisit
+// once the core phases are shipped and actually used" caveat (same as
+// vani-symbolic's v0.6.0+): a genuinely GENERIC trainer function -- one
+// that takes a caller-supplied "build the graph" step -- would need a
+// ref-capturing closure to thread the caller's own data through, the
+// same wall v0.1.0's logreg_fit and v0.3.0 already documented hitting.
+// So this phase adds one small, real utility (shuffled_indices, the
+// exact seeded Fisher-Yates pattern already duplicated in
+// train_test_split/k_fold_split, factored out for NEW code to reuse --
+// the existing two functions are left as-is, not retrofitted, to keep
+// this phase's diff scoped to what it's actually adding) plus ONE
+// thorough worked example proving the whole v0.3.0-v0.5.0 stack composes
+// correctly end to end: a 2-2-1 MLP trained on XOR (the canonical "only
+// solvable with a hidden layer" toy problem -- a single dense+sigmoid
+// layer provably cannot separate XOR's classes, so a passing test here
+// is real evidence the hidden layer's gradient is actually working, not
+// just that loss went down). "A couple of" examples per the original
+// scope text narrowed to this one, deliberately, rather than stretching
+// to a second toy problem that wouldn't validate anything XOR doesn't
+// already cover.
+
+// Returns a seeded random permutation of 0..n-1 (Fisher-Yates), for a
+// caller to build mini-batches from (e.g. `indices[batch*k .. batch*k+k]`
+// each epoch). Same shuffle vani-ml's own train_test_split/k_fold_split
+// already use internally, factored out here as a standalone reusable
+// utility.
+// NO #[wcet]: n is a runtime value.
+// WCET formula: ~20 + n * ~15 cycles (one rand_in_range + one vec_swap
+// per element).
+#[bounded_stack(bytes = 144)]
+fn shuffled_indices(n: i64, seed: i64) -> Vec<i64> {
+    let _seeded: i64 = seed_rng(seed as u64);
+    let idx: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref idx, i);
+        i = i + 1;
+    }
+    let p: i64 = n - 1;
+    while p > 0 {
+        let r: i64 = rand_in_range(0, p + 1);
+        vec_swap(mut ref idx, p, r);
+        p = p - 1;
+    }
+    return idx;
+}
