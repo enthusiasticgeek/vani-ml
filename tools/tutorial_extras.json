@@ -1,37 +1,192 @@
 {
-  "why_use_this": "Reach for this package for the two classical, well-understood ML tasks (linear/logistic regression, k-means clustering) plus the supporting data-pipeline utilities (scaling, train/test/k-fold splitting, one-hot encoding, metrics) any ML workflow needs around the model itself -- built as thin, tested wrappers over [vani-probability](https://github.com/enthusiasticgeek/vani-probability)'s regression and [vani-optimize](https://github.com/enthusiasticgeek/vani-optimize)'s gradient descent rather than reimplementing them. For anything beyond classical ML -- a small neural network, a custom loss you need the gradient of automatically rather than hand-deriving -- this package ALSO includes a genuine reverse-mode automatic-differentiation engine (the `graph_*` functions): build a computation graph from `graph_const`/`graph_param`/`graph_add`/`graph_mul`/etc., forward-evaluate it with `graph_forward`, and get every parameter's gradient in one `graph_backward` call, no manual calculus required. `graph_dense`/`graph_relu`/`graph_sigmoid`/`graph_mse_loss`/etc. compose that primitive layer into the pieces an actual small feedforward network needs, and `graph_sgd_step`/`graph_momentum_step`/`graph_adam_step` are the parameter-update rules that turn gradients into an actual training loop."
+  "why_use_this": "Reach for this package for the two classical, well-understood ML tasks (linear/logistic regression, k-means clustering) plus the supporting data-pipeline utilities (scaling, train/test/k-fold splitting, one-hot encoding, metrics) any ML workflow needs around the model itself -- built as thin, tested wrappers over [vani-probability](https://github.com/enthusiasticgeek/vani-probability)'s regression and [vani-optimize](https://github.com/enthusiasticgeek/vani-optimize)'s gradient descent rather than reimplementing them. For anything beyond classical ML -- a small neural network, a custom loss you need the gradient of automatically rather than hand-deriving -- this package ALSO includes a genuine reverse-mode automatic-differentiation engine (the `graph_*` functions): build a computation graph from `graph_const`/`graph_param`/`graph_add`/`graph_mul`/etc., forward-evaluate it with `graph_forward`, and get every parameter's gradient in one `graph_backward` call, no manual calculus required. `graph_dense`/`graph_relu`/`graph_sigmoid`/`graph_mse_loss`/etc. compose that primitive layer into the pieces an actual small feedforward network needs, and `graph_sgd_step`/`graph_momentum_step`/`graph_adam_step` are the parameter-update rules that turn gradients into an actual training loop.\n\nA single running example threads through the whole autodiff cluster below: a tiny one-input, one-neuron computation \\(a = \\sigma(wx+b)\\) with \\(w=0.5\\), \\(x=2\\), \\(b=-0.5\\) -- small enough to trace by hand from forward pass through backward pass through an optimizer step."
   ,
   "math_notes": {
-    "linreg_predict": "\\( \\hat{y} = X\\beta \\) -- matrix-vector multiply of the design matrix (with intercept column, if `linreg_add_intercept` was used) against the fitted coefficient vector.",
-    "linreg_r_squared": "\\( R^2 = 1 - \\dfrac{SS_{\\text{res}}}{SS_{\\text{tot}}} = 1 - \\dfrac{\\sum_i (y_i-\\hat{y}_i)^2}{\\sum_i (y_i-\\bar{y})^2} \\) -- the coefficient of determination: fraction of the target's variance the model explains, 1.0 for a perfect fit, 0.0 for a model no better than always predicting the mean.",
-    "logreg_predict_proba": "\\( \\hat{p} = \\sigma(X\\beta) = \\dfrac{1}{1+e^{-X\\beta}} \\) -- the logistic (sigmoid) function applied to the linear predictor, squashing an unbounded real value into a \\( (0,1) \\) probability.",
-    "logreg_predict": "Thresholds `logreg_predict_proba`'s output: predicts class 1 if \\( \\hat{p} \\ge \\text{threshold} \\) (typically 0.5), else class 0.",
-    "logreg_fit": "Fits logistic regression coefficients \\( \\beta \\) by gradient descent minimizing the (binary) cross-entropy loss \\( -\\sum_i \\big[y_i\\log\\hat{p}_i + (1-y_i)\\log(1-\\hat{p}_i)\\big] \\), whose gradient w.r.t. \\( \\beta \\) has the clean closed form \\( X^T(\\hat{p}-y) \\) -- a dedicated gradient-descent loop rather than calling into [vani-optimize](https://github.com/enthusiasticgeek/vani-optimize) directly, since threading the training data through vani-optimize's fixed `fn` pointer signature would need a ref-capturing closure vāṇी doesn't support (see the README's design note).",
-    "kmeans_fit": "Lloyd's algorithm for k-means clustering: alternates (1) assigning each point to its nearest centroid (by Euclidean distance) and (2) recomputing each centroid as the mean of its assigned points, until assignments stop changing or `max_iter` is reached -- converges to a LOCAL optimum of the within-cluster sum of squares (`kmeans_inertia`), not necessarily the global one, which is why random initialization and multiple restarts matter in practice.",
-    "kmeans_inertia": "\\( \\sum_i \\lVert x_i - c_{a_i} \\rVert^2 \\) -- the within-cluster sum of squared distances from each point to its assigned centroid, the objective k-means implicitly minimizes; lower is tighter clusters, useful for comparing different \\( k \\) or different random initializations of the same \\( k \\).",
-    "mse": "\\( \\dfrac{1}{n}\\sum_i (y_i - \\hat{y}_i)^2 \\) -- mean squared error, the standard regression-error metric.",
-    "accuracy": "\\( \\dfrac{\\text{correct predictions}}{\\text{total predictions}} \\) -- fraction of labels predicted correctly, for binary \\( \\{0,1\\} \\) labels.",
-    "precision": "\\( \\dfrac{TP}{TP+FP} \\) -- of everything predicted positive, what fraction actually was; returns 0.0 (with a documented caveat) when there are no predicted positives at all, matching scikit-learn's convention.",
-    "recall": "\\( \\dfrac{TP}{TP+FN} \\) -- of everything actually positive, what fraction got predicted as such; returns 0.0 when there are no actual positives.",
-    "f1_score": "\\( 2 \\cdot \\dfrac{\\text{precision}\\cdot\\text{recall}}{\\text{precision}+\\text{recall}} \\) -- the harmonic mean of precision and recall, penalizing a model that's lopsided toward one at the expense of the other more than a plain average would; returns 0.0 if both are 0.",
-    "standardize_fit": "Computes each feature's mean \\( \\mu_j \\) and standard deviation \\( \\sigma_j \\) across the training data -- the parameters `standardize_apply` uses for z-score standardization \\( x' = (x-\\mu)/\\sigma \\).",
-    "standardize_apply": "\\( x'_{ij} = \\dfrac{x_{ij} - \\mu_j}{\\sigma_j} \\) -- z-score standardization using the `StandardScaler`'s fitted mean/std, giving each feature zero mean and unit variance; apply the SAME fitted scaler to both training and test data (never re-fit on the test set) to avoid leaking test-set statistics into the model.",
-    "normalize_fit": "Computes each feature's min and max across the training data -- the parameters `normalize_apply` uses for min-max scaling.",
-    "normalize_apply": "\\( x'_{ij} = \\dfrac{x_{ij} - \\min_j}{\\max_j - \\min_j} \\) -- min-max scaling into \\( [0,1] \\) using the `MinMaxScaler`'s fitted range; same train/test-fitting discipline as `standardize_apply`.",
-    "graph_add": "Adds an `Add` node to the computation graph representing \\( a+b \\) -- pure graph construction; `graph_forward` computes the actual value, `graph_backward` computes \\( \\partial(\\cdot)/\\partial a = 1,\\ \\partial(\\cdot)/\\partial b = 1 \\) when propagating gradients through it.",
-    "graph_mul": "Adds a `Mul` node representing \\( a \\times b \\) -- backward pass applies the product rule, \\( \\partial(ab)/\\partial a = b,\\ \\partial(ab)/\\partial b = a \\).",
-    "graph_div": "Adds a `Div` node representing \\( a/b \\) -- backward pass applies the quotient rule.",
-    "graph_neg": "Adds a `Neg` node representing \\( -a \\).",
-    "graph_forward": "Evaluates every node in the arena in index order (append-only construction guarantees a node's children always have lower indices, so this single forward pass is already topologically sorted -- no separate topo-sort needed), producing the value each node evaluates to.",
-    "graph_backward": "Reverse-mode automatic differentiation: seeds the root node's gradient to 1, then walks the arena in REVERSE index order, at each node pushing its local derivative contribution back onto its children's accumulated gradients (the chain rule, applied automatically rather than by hand) -- descending index order guarantees every consumer of a node has already contributed its share before that node's own gradient is read as final, the same topological guarantee `graph_forward` exploits in the opposite direction. Returns the gradient of the root with respect to every node in the graph, including every `graph_param` leaf.",
-    "graph_relu": "\\( \\operatorname{ReLU}(a) = \\max(0,a) \\), with derivative \\( 1 \\) for \\( a>0 \\) and \\( 0 \\) for \\( a<0 \\) (subgradient convention at exactly 0) used during `graph_backward`.",
-    "graph_sigmoid": "\\( \\sigma(a) = 1/(1+e^{-a}) \\), with derivative \\( \\sigma(a)(1-\\sigma(a)) \\) used during `graph_backward` -- the same sigmoid `logreg_predict_proba` uses directly on real values, here as a differentiable graph node instead.",
-    "graph_tanh": "\\( \\tanh(a) \\), with derivative \\( 1-\\tanh^2(a) \\) used during `graph_backward`.",
-    "graph_dense": "Builds a fully-connected (\"dense\"/\"linear\") layer's computation as graph nodes: \\( \\sum_i w_i x_i + b \\) -- a dot product of `inputs` against `weights` (via repeated `graph_mul`/`graph_add`) plus a bias term, all as differentiable graph nodes so `graph_backward` can compute gradients w.r.t. every weight and the bias.",
-    "graph_mse_loss": "Builds \\( \\dfrac{1}{n}\\sum_i (\\text{pred}_i - \\text{target}_i)^2 \\) as graph nodes -- the differentiable-graph version of the plain numeric `mse` function above, so its gradient w.r.t. every upstream parameter is available via `graph_backward`.",
-    "graph_binary_cross_entropy_loss": "Builds the binary cross-entropy loss \\( -\\sum_i\\big[y_i\\log p_i + (1-y_i)\\log(1-p_i)\\big] \\) as graph nodes, given prediction nodes (typically the output of `graph_sigmoid`) and target values -- the differentiable-graph version of the loss `logreg_fit`'s hand-written gradient descent minimizes directly.",
-    "graph_sgd_step": "Plain (stateless) gradient descent parameter update: \\( \\theta \\leftarrow \\theta - \\eta \\, g \\) for each parameter \\( \\theta \\) with gradient \\( g \\) and learning rate \\( \\eta \\).",
-    "graph_momentum_step": "SGD with momentum: \\( v \\leftarrow \\beta v + g \\), \\( \\theta \\leftarrow \\theta - \\eta v \\) -- accumulates a running velocity \\( v \\) across steps (weighted by \\( \\beta \\)) instead of using the raw gradient directly, smoothing out oscillation and accelerating progress along consistent gradient directions.",
-    "graph_adam_step": "The Adam optimizer update: maintains a first-moment estimate \\( m \\leftarrow \\beta_1 m + (1-\\beta_1)g \\) and second-moment estimate \\( v \\leftarrow \\beta_2 v + (1-\\beta_2)g^2 \\), bias-corrects both (\\( \\hat{m}=m/(1-\\beta_1^t) \\), \\( \\hat{v}=v/(1-\\beta_2^t) \\)) to counteract their zero initialization, then updates \\( \\theta \\leftarrow \\theta - \\eta\\, \\hat{m}/(\\sqrt{\\hat{v}}+\\epsilon) \\) -- effectively a per-parameter adaptive learning rate, the \\( \\epsilon \\) purely to avoid division by zero."
+    "linreg_predict": {
+      "intuition": "Once you have fitted coefficients, predicting is just plugging them back into the linear formula -- multiply each feature by its coefficient and add them up (the intercept term is just a feature that's always \\(1\\)).",
+      "formula": "\\[ \\hat y = X\\beta \\]",
+      "example": "With intercept-augmented design matrix \\(X=\\begin{pmatrix}1&1\\\\1&2\\end{pmatrix}\\) (first column all-1s for the intercept, second column the real feature) and fitted \\(\\beta=(1,2)\\): \\(\\hat y_0 = 1\\times1+1\\times2=3\\). \\(\\hat y_1=1\\times1+2\\times2=5\\). So \\(\\hat y=(3,5)\\) -- matching the line \\(y=1+2x\\) evaluated at \\(x=1\\) and \\(x=2\\).",
+      "why": "This is exactly `mat_vec_mul` from [vani-matrix](https://github.com/enthusiasticgeek/vani-matrix) applied to the fitted model -- prediction is always just a matrix-vector multiply once the coefficients are known, no special logic beyond that."
+    },
+    "linreg_r_squared": {
+      "intuition": "How much better does the model do than just always predicting the average? \\(R^2=1\\) means the model explains all the variation; \\(R^2=0\\) means it's no better than that trivial \"always guess the mean\" baseline.",
+      "formula": "\\[ R^2 = 1-\\dfrac{\\sum_i(y_i-\\hat y_i)^2}{\\sum_i(y_i-\\bar y)^2} \\]",
+      "example": "Actual values \\(y=(2,4,6)\\) (mean \\(\\bar y=4\\)), predicted \\(\\hat y=(3,3,6)\\). \\(SS_{\\text{tot}} = (2-4)^2+(4-4)^2+(6-4)^2=4+0+4=8\\). \\(SS_{\\text{res}}=(2-3)^2+(4-3)^2+(6-6)^2=1+1+0=2\\). \\(R^2=1-2/8=0.75\\) -- the model explains 75% of the target's variance.",
+      "why": "Reusing this SAME \\((y,\\hat y)\\) pair, `mse`'s example computes the plain mean squared error as \\(0.667\\) on the identical predictions -- \\(R^2\\) and MSE are two different lenses on the same residuals: MSE in the target's own units, \\(R^2\\) as a unitless fraction of variance explained."
+    },
+    "logreg_predict_proba": {
+      "intuition": "Ordinary linear regression's output is unbounded (can be any real number), but a probability has to stay between 0 and 1 -- the sigmoid function squashes any real number into that range smoothly, without a hard cutoff.",
+      "formula": "\\[ \\hat p = \\sigma(X\\beta) = \\dfrac1{1+e^{-X\\beta}} \\]",
+      "example": "For a linear predictor value \\(X\\beta=1\\): \\(\\hat p = \\dfrac1{1+e^{-1}} = \\dfrac1{1+0.368}=\\dfrac1{1.368}\\approx0.731\\) -- a 73.1% predicted probability of the positive class.",
+      "why": "This \\(0.731\\) feeds directly into `logreg_predict`'s example below (thresholded at 0.5, so this counts as a positive prediction) -- probability first, hard classification decision second, kept as two separate functions so you can access the raw probability when you need it (e.g. for ranking, not just classifying)."
+    },
+    "logreg_predict": {
+      "intuition": "Turn a probability into a hard yes/no decision by comparing it against a cutoff -- above the threshold means \"predict positive\", below means \"predict negative\".",
+      "formula": "Predict class 1 if \\(\\hat p\\ge\\text{threshold}\\) (typically 0.5), else class 0.",
+      "example": "Using `logreg_predict_proba`'s \\(\\hat p=0.731\\) with the default threshold \\(0.5\\): since \\(0.731\\ge0.5\\), predict class \\(1\\).",
+      "why": "The threshold doesn't have to be \\(0.5\\) -- shifting it trades off `precision` against `recall` (a higher threshold makes positive predictions rarer but more trustworthy; a lower one catches more true positives at the cost of more false alarms), a choice that depends on which kind of mistake is more costly for your specific problem."
+    },
+    "logreg_fit": {
+      "intuition": "Find the coefficients that make the model's predicted probabilities match the actual observed labels as closely as possible, by gradient descent -- and logistic regression's loss has a remarkably clean gradient formula, no complicated calculus needed at each step.",
+      "formula": "Minimizes cross-entropy loss via gradient descent, using the closed-form gradient \\(X^T(\\hat p-y)\\).",
+      "example": "For a single training example with predicted probability \\(\\hat p=0.731\\) (from `logreg_predict_proba`'s example) and TRUE label \\(y=1\\): the gradient contribution is \\(\\hat p - y = 0.731-1=-0.269\\) -- negative, meaning the loss would decrease if the linear predictor \\(X\\beta\\) increased further (pushing \\(\\hat p\\) even closer to the true label \\(1\\)), which is exactly the direction gradient descent would step.",
+      "why": "This clean gradient formula, \\(X^T(\\hat p-y)\\), is why logistic regression has its own dedicated hand-written gradient-descent loop rather than calling into [vani-optimize](https://github.com/enthusiasticgeek/vani-optimize) directly -- threading the training data through vani-optimize's fixed `fn` pointer signature would need a ref-capturing closure vāṇी doesn't support (see the README's design note)."
+    },
+    "kmeans_fit": {
+      "intuition": "Alternate between two simple steps until they stop changing anything: (1) assign every point to its CLOSEST current centroid, then (2) move every centroid to the AVERAGE of the points now assigned to it. Each step can only improve (or leave unchanged) the clustering quality, so this always settles down eventually.",
+      "formula": "Alternate nearest-centroid assignment and centroid-recomputation (Lloyd's algorithm) until assignments stabilize.",
+      "example": "Four points forming two obvious clusters: \\((1,1)\\), \\((1,3)\\), \\((5,1)\\), \\((5,3)\\), with \\(k=2\\), starting from deliberately bad initial centroids \\(c_1=(0,0)\\), \\(c_2=(6,0)\\). Assignment step: \\((1,1)\\) and \\((1,3)\\) are both closer to \\(c_1\\) (distances \\(\\approx1.41\\) and \\(\\approx3.16\\)) than to \\(c_2\\) (distances \\(\\approx5.10\\) and \\(\\approx5.83\\)) -- assign both to cluster 1. Symmetrically, \\((5,1)\\) and \\((5,3)\\) both go to cluster 2. Update step: new \\(c_1 = \\text{mean}((1,1),(1,3)) = (1,2)\\); new \\(c_2=\\text{mean}((5,1),(5,3))=(5,2)\\) -- already the obviously \"correct\" two centroids, converged in a single iteration despite the deliberately bad starting point.",
+      "why": "This example converged quickly because the two clusters are so clearly separated that almost ANY reasonable starting point would sort them out fast -- for messier, less-obviously-separated real data, different random initializations can converge to genuinely DIFFERENT local optima, which is exactly why real k-means usage typically tries several random restarts and keeps the one with the lowest `kmeans_inertia`."
+    },
+    "kmeans_inertia": {
+      "intuition": "How tightly packed are the clusters? Sum up, for every point, how far it is from ITS OWN assigned centroid (squared) -- a small total means every point sits close to its cluster's center; a large total means the clusters are loose or the wrong number of clusters was chosen.",
+      "formula": "\\[ \\sum_i\\lVert x_i-c_{a_i}\\rVert^2 \\]",
+      "example": "Using `kmeans_fit`'s converged result (centroids \\((1,2)\\) and \\((5,2)\\)): each of the four points is exactly distance \\(1\\) from its own centroid (e.g. \\((1,1)\\) to \\((1,2)\\): \\(\\sqrt{0+1}=1\\)), so each contributes \\(1^2=1\\) to the sum. Total inertia \\(=1+1+1+1=4\\).",
+      "why": "This is the exact quantity k-means is implicitly trying to MINIMIZE -- comparing this number across different values of \\(k\\), or across different random restarts at the same \\(k\\), is the standard way to judge \"did this clustering find a good structure\" (lower inertia is tighter, though inertia trivially keeps dropping as \\(k\\) increases, so it's not a fair comparison ACROSS different \\(k\\) values without further adjustment)."
+    },
+    "mse": {
+      "intuition": "The average squared gap between what the model predicted and what actually happened -- squaring makes big misses count disproportionately more than small ones, and keeps every term positive so overestimates and underestimates don't cancel out.",
+      "formula": "\\[ \\dfrac1n\\sum_i(y_i-\\hat y_i)^2 \\]",
+      "example": "Using `linreg_r_squared`'s same \\(y=(2,4,6)\\), \\(\\hat y=(3,3,6)\\): \\(\\text{mse} = \\dfrac{(2-3)^2+(4-3)^2+(6-6)^2}3 = \\dfrac{1+1+0}3=\\dfrac23\\approx0.667\\).",
+      "why": "Unlike `linreg_r_squared` (a unitless fraction, always comparable across different problems), MSE is in the SAME units as \\(y\\) squared -- useful for judging \"how far off, on average, in real terms\", but not directly comparable between two datasets with very different target scales."
+    },
+    "accuracy": {
+      "intuition": "The simplest possible classification metric -- what fraction of predictions were exactly right?",
+      "formula": "\\[ \\dfrac{\\text{correct}}{\\text{total}} \\]",
+      "example": "True labels \\(y=(1,0,1,1,0)\\), predicted \\(\\hat y=(1,0,0,1,1)\\): comparing position by position, predictions 1, 2, and 4 (1-indexed) match (\\(1=1\\), \\(0=0\\), \\(1=1\\)), predictions 3 and 5 don't (\\(0\\ne1\\), \\(1\\ne0\\)). \\(3\\) correct out of \\(5\\): accuracy \\(=0.6\\).",
+      "why": "This same \\((y,\\hat y)\\) pair is reused in `precision`/`recall`/`f1_score`'s examples below -- accuracy alone can be misleading when classes are imbalanced (predicting \"always negative\" can score high accuracy if negatives are rare... rather, if positives are rare), which is exactly why precision/recall exist as complementary views."
+    },
+    "precision": {
+      "intuition": "Of everything the model FLAGGED as positive, how much did it get right? A model that cries wolf too often (many false alarms) has low precision, even if it never MISSES a true positive.",
+      "formula": "\\[ \\dfrac{TP}{TP+FP} \\]",
+      "example": "Using `accuracy`'s same \\(y=(1,0,1,1,0)\\), \\(\\hat y=(1,0,0,1,1)\\): the model predicted positive at positions 1, 4, 5. Of those, positions 1 and 4 are TRUE positives (\\(y=1\\) there too); position 5 is a FALSE positive (\\(y=0\\) but predicted 1). \\(TP=2\\), \\(FP=1\\). Precision \\(=2/(2+1)=2/3\\approx0.667\\).",
+      "why": "This SAME confusion pattern also determines `recall`'s answer below, but the two metrics look at different denominators -- precision asks \"of my positive PREDICTIONS, how many were right\"; recall asks \"of the actual positives, how many did I CATCH\" -- genuinely different questions that happen to share this example's numbers by coincidence (both come out to \\(2/3\\) here)."
+    },
+    "recall": {
+      "intuition": "Of everything that was ACTUALLY positive, how much did the model successfully catch? A model that's overly cautious (predicts negative too often) misses true positives, hurting recall, even if every positive prediction it DOES make is correct.",
+      "formula": "\\[ \\dfrac{TP}{TP+FN} \\]",
+      "example": "Same example: actual positives are at positions 1, 3, 4 (\\(y=1\\)). The model caught positions 1 and 4 (\\(TP=2\\)) but MISSED position 3 (predicted \\(0\\) there, a false negative, \\(FN=1\\)). Recall \\(=2/(2+1)=2/3\\approx0.667\\).",
+      "why": "Precision and recall came out equal here (\\(2/3\\) each) purely because this example happens to have one false positive and one false negative -- in general they can differ substantially, and the tradeoff between them (adjustable via `logreg_predict`'s threshold) is a real design decision depending on which kind of error costs more in your specific application."
+    },
+    "f1_score": {
+      "intuition": "A single number combining precision and recall, using the HARMONIC mean rather than a plain average -- the harmonic mean punishes a big imbalance between the two more harshly than a plain average would, so a model can't get a good F1 score by being great at one and terrible at the other.",
+      "formula": "\\[ 2\\cdot\\dfrac{\\text{precision}\\times\\text{recall}}{\\text{precision}+\\text{recall}} \\]",
+      "example": "Using `precision`'s and `recall`'s matching values (both \\(2/3\\)): \\(F_1 = 2\\times\\dfrac{(2/3)(2/3)}{(2/3)+(2/3)} = 2\\times\\dfrac{4/9}{4/3} = 2\\times\\dfrac13=\\dfrac23\\approx0.667\\) -- when precision and recall are already equal, their harmonic mean equals that same shared value.",
+      "why": "The harmonic mean's punishing behavior only shows up clearly when precision and recall DIFFER -- e.g. precision \\(=1.0\\) and recall \\(=0.1\\) average to \\(0.55\\) with a plain mean, but the harmonic mean gives only \\(\\approx0.18\\), reflecting that a model catching only 10% of true positives is genuinely bad overall, no matter how precise its rare positive predictions are."
+    },
+    "standardize_fit": {
+      "intuition": "Compute the mean and spread of each feature from the TRAINING data only -- these become the fixed reference numbers every future data point (training or test) gets measured against.",
+      "formula": "Mean \\(\\mu_j\\) and standard deviation \\(\\sigma_j\\) per feature.",
+      "example": "For a feature with training values \\((0,10)\\): mean \\(\\mu=5\\), (population) standard deviation \\(\\sigma=\\sqrt{\\dfrac{(0-5)^2+(10-5)^2}2}=\\sqrt{\\dfrac{25+25}2}=\\sqrt{25}=5\\).",
+      "why": "These exact numbers, \\(\\mu=5,\\sigma=5\\), are what `standardize_apply`'s example reuses to actually transform data -- fitting and applying are deliberately separate steps so the SAME fitted scaler can be reused on new data later."
+    },
+    "standardize_apply": {
+      "intuition": "Shift each value so the mean becomes 0, then rescale so the spread becomes 1 -- puts every feature on the same common scale, which matters a lot for gradient-based methods (`logreg_fit`, the `graph_*` optimizers) that are sensitive to features having wildly different natural scales.",
+      "formula": "\\[ x' = \\dfrac{x-\\mu}{\\sigma} \\]",
+      "example": "Using `standardize_fit`'s \\(\\mu=5,\\sigma=5\\): the training value \\(0\\) becomes \\((0-5)/5=-1\\); the value \\(10\\) becomes \\((10-5)/5=1\\) -- both now expressed as \"standard deviations away from the mean\" instead of raw units.",
+      "why": "The GOLDEN RULE stated directly in the original note bears repeating: fit the scaler ONCE on training data, then apply that SAME fitted scaler to test data too -- never re-fit on the test set, or you'd be leaking information about the test set's own distribution into what's supposed to be an honest, unseen evaluation."
+    },
+    "normalize_fit": {
+      "intuition": "Instead of mean/spread, record the minimum and maximum values a feature takes in the training data -- the two numbers `normalize_apply` needs to rescale everything into a fixed \\([0,1]\\) range.",
+      "formula": "Min and max per feature.",
+      "example": "For the same training values \\((0,10)\\): min \\(=0\\), max \\(=10\\).",
+      "why": "Compare with `standardize_fit`'s approach on the identical data -- min/max scaling and mean/std scaling are two different ways of putting a feature on a common scale, useful in different situations (min-max guarantees a fixed \\([0,1]\\) range but is more sensitive to outliers; standardization is less sensitive to outliers but doesn't guarantee any fixed range)."
+    },
+    "normalize_apply": {
+      "intuition": "Rescale linearly so the minimum training value maps to 0 and the maximum maps to 1, with everything else falling proportionally in between.",
+      "formula": "\\[ x' = \\dfrac{x-\\min}{\\max-\\min} \\]",
+      "example": "Using `normalize_fit`'s min \\(=0\\), max\\(=10\\): the value \\(0\\) maps to \\((0-0)/10=0\\); the value \\(10\\) maps to \\((10-0)/10=1\\).",
+      "why": "Same train/test-fitting discipline as `standardize_apply` applies here too -- fit the min/max once on training data, apply that same fitted range to test data, never re-fit on test data."
+    },
+    "graph_add": {
+      "intuition": "Builds a node that will compute \\(a+b\\) once the graph is evaluated -- and because addition passes gradients straight through unchanged to both inputs, this is the simplest possible node for `graph_backward` to handle.",
+      "formula": "Forward: \\(a+b\\). Backward: \\(\\partial(\\cdot)/\\partial a=1\\), \\(\\partial(\\cdot)/\\partial b=1\\).",
+      "example": "In the running neuron example \\(a=\\sigma(wx+b)\\): the node computing \\(wx+b\\) is an `Add` node combining the `Mul` node (\\(wx\\)) and the bias parameter \\(b\\) -- with \\(wx=0.5\\times2=1.0\\) and \\(b=-0.5\\), this node evaluates to \\(1.0+(-0.5)=0.5\\).",
+      "why": "During `graph_backward`, whatever gradient arrives at this `Add` node gets copied UNCHANGED to both \\(wx\\) and \\(b\\) -- see `graph_backward`'s own worked example, where the gradient flowing INTO this node (\\(\\approx0.235\\)) flows OUT to both children identically."
+    },
+    "graph_mul": {
+      "intuition": "Builds a node computing \\(a\\times b\\) -- and multiplication's backward rule (the product rule) means each input's gradient depends on the OTHER input's value, not its own.",
+      "formula": "Forward: \\(a\\times b\\). Backward: \\(\\partial(ab)/\\partial a=b\\), \\(\\partial(ab)/\\partial b=a\\).",
+      "example": "In the running neuron example: the node computing \\(wx\\) is a `Mul` node with \\(w=0.5\\) and \\(x=2\\), evaluating to \\(0.5\\times2=1.0\\).",
+      "why": "During `graph_backward`, the gradient flowing back to \\(w\\) through this node gets multiplied by \\(x=2\\) (the OTHER input's value) -- exactly why the final gradient with respect to \\(w\\) (\\(\\approx0.47\\), see `graph_backward`'s example) ends up proportional to \\(x\\)."
+    },
+    "graph_div": {
+      "intuition": "Builds a node computing \\(a/b\\), with the quotient rule governing how gradients flow back through it.",
+      "formula": "Forward: \\(a/b\\). Backward: the quotient rule, \\(\\partial(a/b)/\\partial a = 1/b\\), \\(\\partial(a/b)/\\partial b=-a/b^2\\).",
+      "example": "A node computing \\(1/2\\) would evaluate to \\(0.5\\) during `graph_forward`; during `graph_backward`, a gradient of \\(g\\) arriving at this node would send \\(g\\times(1/2)=0.5g\\) back to the numerator and \\(g\\times(-1/4)=-0.25g\\) back to the denominator.",
+      "why": "Not used directly in the running neuron example (which has no division), but the same automatic chain-rule machinery `graph_add`/`graph_mul` demonstrate applies here too -- you never need to manually work out a quotient-rule derivative by hand, `graph_backward` does it for any graph containing a `Div` node."
+    },
+    "graph_neg": {
+      "intuition": "Builds a node computing \\(-a\\) -- flips both the forward value and the gradient's sign.",
+      "formula": "Forward: \\(-a\\). Backward: \\(\\partial(-a)/\\partial a=-1\\).",
+      "example": "A node negating the value \\(3\\) evaluates to \\(-3\\); a gradient of \\(g\\) arriving at this node sends \\(-g\\) back to its input.",
+      "why": "Useful for building subtraction out of `graph_add`+`graph_neg` (\\(a-b = a+(-b)\\)) when a graph library doesn't have a dedicated subtraction node -- the same composition idea [vani-bignum](https://github.com/enthusiasticgeek/vani-bignum)'s `bn_sub` uses for big integers."
+    },
+    "graph_forward": {
+      "intuition": "Walk every node in the order it was created, computing each one's value -- because a node can only ever reference EARLIER nodes as its inputs (the arena only grows, never reorders), this simple left-to-right walk is automatically guaranteed to have every input ready before it's needed.",
+      "formula": "Evaluate every node in index order, each producing a value from its (already-computed) children.",
+      "example": "For the running neuron example, in construction order: \\(w=0.5\\) (param), \\(x=2.0\\) (const), \\(wx=0.5\\times2.0=1.0\\) (mul), \\(b=-0.5\\) (param), \\(wx+b=1.0+(-0.5)=0.5\\) (add), \\(\\sigma(0.5)\\approx0.6225\\) (sigmoid). The full value array in order: \\((0.5,\\,2.0,\\,1.0,\\,-0.5,\\,0.5,\\,0.6225)\\).",
+      "why": "This \"no separate topological sort needed\" property is a direct consequence of building the graph via an APPEND-ONLY arena -- the same design idea [vani-symbolic](https://github.com/enthusiasticgeek/vani-symbolic)'s expression arena uses for exactly the same reason."
+    },
+    "graph_backward": {
+      "intuition": "Run the SAME idea as `graph_forward` in reverse: starting from the output and working backward, each node pushes its share of the gradient onto its own inputs -- and because a node's CONSUMERS always have higher indices than the node itself, processing in reverse index order guarantees every consumer has already contributed before a node's own gradient is read as final.",
+      "formula": "Seed the root's gradient to 1; walk the arena in reverse index order, propagating each node's local derivative contribution to its children.",
+      "example": "For the running neuron \\(a=\\sigma(wx+b)\\) (arena values from `graph_forward`'s example): seed \\(\\text{grad}[\\sigma\\text{-node}]=1\\). The sigmoid node's local derivative is \\(\\sigma(0.5)(1-\\sigma(0.5))=0.6225\\times0.3775\\approx0.235\\), so \\(\\text{grad}[\\text{add-node}] \\mathrel{+}= 1\\times0.235=0.235\\). The add node passes this straight through to both children: \\(\\text{grad}[wx]\\mathrel{+}=0.235\\), \\(\\text{grad}[b]\\mathrel{+}=0.235\\) (so \\(\\partial a/\\partial b\\approx0.235\\), final). The mul node (\\(wx\\)) sends its share back scaled by the OTHER factor: \\(\\text{grad}[w]\\mathrel{+}=0.235\\times x=0.235\\times2=0.47\\) (so \\(\\partial a/\\partial w\\approx0.47\\), final). Check against calculus directly: \\(\\partial a/\\partial w = \\sigma'(wx+b)\\times x = 0.235\\times2=0.47\\) -- matches exactly.",
+      "why": "Getting BOTH \\(\\partial a/\\partial w\\) and \\(\\partial a/\\partial b\\) took exactly ONE backward pass, regardless of how many parameters the graph has -- this is the whole point of reverse-mode automatic differentiation: the cost is roughly proportional to the graph size, not to the number of parameters you need gradients for (unlike computing each parameter's gradient separately via finite differences, which would cost one full pass PER parameter)."
+    },
+    "graph_relu": {
+      "intuition": "Passes positive values through unchanged, but clamps every negative value to exactly zero -- a simple, cheap nonlinearity that's become the default choice in most modern neural networks.",
+      "formula": "\\[ \\operatorname{ReLU}(a)=\\max(0,a) \\], derivative \\(1\\) for \\(a>0\\), \\(0\\) for \\(a<0\\).",
+      "example": "For \\(a=0.5\\) (positive): \\(\\operatorname{ReLU}(0.5)=0.5\\), derivative \\(1\\) (passes through unchanged, gradient flows freely). For \\(a=-0.5\\) (negative): \\(\\operatorname{ReLU}(-0.5)=0\\), derivative \\(0\\) (completely blocks any gradient from flowing back through this node).",
+      "why": "That derivative of exactly \\(0\\) for negative inputs is both ReLU's biggest strength (very cheap to compute, no exponentials like `graph_sigmoid`/`graph_tanh` need) and its most famous failure mode (a \"dead\" neuron stuck permanently outputting 0 gets ZERO gradient signal ever again, since \\(0\\) times anything is still \\(0\\), and can never recover during training)."
+    },
+    "graph_sigmoid": {
+      "intuition": "Same sigmoid function `logreg_predict_proba` uses directly on plain numbers, now wrapped as a differentiable GRAPH NODE so its gradient can be automatically chained together with everything upstream of it.",
+      "formula": "\\[ \\sigma(a)=1/(1+e^{-a}) \\], derivative \\(\\sigma(a)(1-\\sigma(a))\\).",
+      "example": "For \\(a=0.5\\) (the running neuron's pre-activation value): \\(\\sigma(0.5)\\approx0.6225\\). Derivative: \\(0.6225\\times(1-0.6225)=0.6225\\times0.3775\\approx0.235\\) -- exactly the local derivative `graph_backward`'s worked example uses to start propagating the gradient backward through this node.",
+      "why": "Unlike `graph_relu`'s derivative (always exactly 0 or 1), sigmoid's derivative is largest (\\(0.25\\)) right at \\(a=0\\) and shrinks toward 0 as \\(|a|\\) grows large in either direction (\"saturating\") -- a well-known training difficulty (\"vanishing gradients\") for deep networks stacking many sigmoid layers, part of why ReLU became the more common default choice for hidden layers."
+    },
+    "graph_tanh": {
+      "intuition": "Similar S-shape to sigmoid, but centered on zero and ranging over \\((-1,1)\\) instead of \\((0,1)\\) -- often preferred over sigmoid for hidden layers since a zero-centered output tends to make gradient-based training behave better.",
+      "formula": "\\[ \\tanh(a) \\], derivative \\(1-\\tanh^2(a)\\).",
+      "example": "For \\(a=0.5\\): \\(\\tanh(0.5)\\approx0.4621\\). Derivative: \\(1-0.4621^2=1-0.2135=0.7865\\).",
+      "why": "Compare this derivative (\\(0.7865\\)) against `graph_sigmoid`'s derivative at the SAME input (\\(0.235\\)) -- tanh's gradient is substantially larger here, part of why it often trains faster than sigmoid in practice, though it suffers the same saturating-gradient problem as sigmoid does for large \\(|a|\\)."
+    },
+    "graph_dense": {
+      "intuition": "The computation every \"fully-connected\" neural network layer does: take a weighted sum of all the inputs, plus one extra always-on bias term -- exactly what the running neuron example already built by hand, just packaged as one convenience function instead of separate `graph_mul`/`graph_add` calls.",
+      "formula": "\\[ \\sum_iw_ix_i+b \\]",
+      "example": "For a single input \\(x=(2.0)\\), single weight \\(w=(0.5)\\), bias \\(b=-0.5\\): `graph_dense` builds exactly the SAME `wx+b` computation the running example traced by hand, evaluating to \\(0.5\\times2.0+(-0.5)=0.5\\) -- identical to the \"add node\" value in `graph_forward`'s example.",
+      "why": "This one-input case is a trivial special case -- the real value of `graph_dense` shows up with MANY inputs and weights, where writing out the sum manually via repeated `graph_mul`/`graph_add` calls would be tedious; this function builds the whole weighted-sum-plus-bias subgraph in one call."
+    },
+    "graph_mse_loss": {
+      "intuition": "The differentiable-graph version of the plain `mse` function -- same formula, but built out of graph nodes so `graph_backward` can compute how every upstream parameter should change to reduce this loss.",
+      "formula": "\\[ \\dfrac1n\\sum_i(\\text{pred}_i-\\text{target}_i)^2 \\]",
+      "example": "Using the running neuron's output \\(0.6225\\) as a single prediction, with a true target of \\(1.0\\): \\(\\text{mse} = (0.6225-1.0)^2/1 = (-0.3775)^2\\approx0.1425\\).",
+      "why": "Because this is built from graph nodes (subtraction, squaring, averaging) rather than computed as a single opaque number, `graph_backward` can push a gradient all the way back through this loss, through the neuron's sigmoid, through its weighted sum, and into \\(w\\) and \\(b\\) -- automatically deriving \"how should I adjust \\(w\\) and \\(b\\) to reduce this squared error\" without anyone hand-deriving that chain of derivatives."
+    },
+    "graph_binary_cross_entropy_loss": {
+      "intuition": "The differentiable-graph version of the cross-entropy loss `logreg_fit`'s hand-written gradient descent minimizes directly -- same formula, but as graph nodes so it plugs into the general `graph_backward` machinery instead of needing its own special-cased gradient derivation.",
+      "formula": "\\[ -\\sum_i\\big[y_i\\log p_i+(1-y_i)\\log(1-p_i)\\big] \\]",
+      "example": "Using the running neuron's output as a predicted probability \\(p=0.6225\\), with true label \\(y=1\\): since \\(y=1\\), only the first term survives: \\(-\\big[1\\times\\log(0.6225)+0\\big] = -\\log(0.6225)\\approx0.474\\).",
+      "why": "`logreg_fit` uses a hand-derived closed-form gradient for exactly this loss (\\(X^T(\\hat p-y)\\), see its own note) BECAUSE that shortcut is available for plain logistic regression -- but for a more complex model (a multi-layer network built from `graph_dense`/`graph_sigmoid` composed several times), no such simple closed form exists, which is exactly when reaching for this graph-based loss plus `graph_backward` pays off instead of trying to hand-derive an increasingly complicated gradient."
+    },
+    "graph_sgd_step": {
+      "intuition": "The most direct possible use of a gradient: move each parameter a small step in the direction that reduces the loss.",
+      "formula": "\\[ \\theta \\leftarrow \\theta-\\eta g \\]",
+      "example": "Using the running example's gradient \\(\\partial a/\\partial w\\approx0.47\\) (from `graph_backward`'s example), current \\(w=0.5\\), learning rate \\(\\eta=0.1\\): \\(w_{\\text{new}} = 0.5-0.1\\times0.47=0.5-0.047=0.453\\).",
+      "why": "This exact update, \\(0.453\\), reappears as `graph_momentum_step`'s FIRST-step answer too (see its own example) -- with no prior velocity to build on yet, momentum's very first step behaves identically to plain SGD; the difference between the two only shows up from the SECOND step onward."
+    },
+    "graph_momentum_step": {
+      "intuition": "Instead of reacting only to the CURRENT gradient, build up a \"velocity\" that remembers a weighted blend of past gradients too -- like a ball rolling downhill that keeps some of its momentum from previous steps instead of instantly changing direction every time the slope changes slightly.",
+      "formula": "\\[ v\\leftarrow\\beta v+g,\\qquad \\theta\\leftarrow\\theta-\\eta v \\]",
+      "example": "Starting with no prior velocity (\\(v_{\\text{prev}}=0\\)), \\(\\beta=0.9\\), and the same gradient \\(g\\approx0.47\\), \\(\\eta=0.1\\), \\(w=0.5\\): \\(v = 0.9\\times0+0.47=0.47\\). \\(w_{\\text{new}} = 0.5-0.1\\times0.47=0.453\\) -- IDENTICAL to `graph_sgd_step`'s answer, since with zero prior velocity, this first step is mathematically the same computation.",
+      "why": "Momentum's real benefit only shows up over MULTIPLE steps: if the next gradient also points roughly the same direction, \\(v\\) grows larger than the raw gradient alone would (accelerating progress along a consistent direction), while gradients that keep flip-flopping in sign get damped out by the accumulated average -- neither effect is visible from a single first step starting at zero velocity."
+    },
+    "graph_adam_step": {
+      "intuition": "Combines momentum's \"remember past gradients\" idea with a SECOND running average that tracks how large the gradients have typically been, then divides by that to give each parameter its own adaptive step size -- a parameter with consistently large gradients gets smaller relative steps, one with small/noisy gradients gets relatively larger ones. The bias-correction step exists purely to fix an artifact of both running averages starting at exactly zero.",
+      "formula": "\\[ m\\leftarrow\\beta_1m+(1-\\beta_1)g,\\quad v\\leftarrow\\beta_2v+(1-\\beta_2)g^2,\\quad \\hat m=\\dfrac{m}{1-\\beta_1^t},\\quad \\hat v=\\dfrac{v}{1-\\beta_2^t},\\quad \\theta\\leftarrow\\theta-\\eta\\dfrac{\\hat m}{\\sqrt{\\hat v}+\\epsilon} \\]",
+      "example": "First step (\\(t=1\\)), starting from \\(m_{\\text{prev}}=v_{\\text{prev}}=0\\), \\(\\beta_1=0.9,\\beta_2=0.999\\), gradient \\(g\\approx0.47\\): \\(m=0.9\\times0+0.1\\times0.47=0.047\\). \\(v=0.999\\times0+0.001\\times0.47^2=0.001\\times0.2209\\approx0.0002209\\). Bias-corrected: \\(\\hat m = 0.047/(1-0.9)=0.047/0.1=0.47\\) (recovers the RAW gradient exactly). \\(\\hat v=0.0002209/(1-0.999)=0.0002209/0.001=0.2209\\) (recovers the raw squared-gradient exactly). Update: \\(w_{\\text{new}} = 0.5-0.1\\times\\dfrac{0.47}{\\sqrt{0.2209}+\\epsilon} \\approx 0.5-0.1\\times\\dfrac{0.47}{0.47} = 0.5-0.1\\times1.0=0.4\\).",
+      "why": "Notice the bias correction exactly recovers the raw gradient (\\(\\hat m=g\\)) and raw squared gradient (\\(\\hat v=g^2\\), so \\(\\sqrt{\\hat v}=|g|\\)) on this very first step -- meaning Adam's very first update is ALWAYS approximately a fixed-size step of \\(\\pm\\eta\\) (here, \\(\\approx0.1\\)) in the gradient's direction, REGARDLESS of the gradient's actual magnitude. This is a genuine, well-known property of Adam's first step (before the moment estimates have had time to diverge from each other), quite different from SGD's step size scaling directly with the raw gradient magnitude (compare `graph_sgd_step`'s much smaller \\(0.047\\) step for the identical gradient)."
+    }
   }
 }
