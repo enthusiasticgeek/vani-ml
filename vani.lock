@@ -4,21 +4,29 @@ version = 1
 
 [[package]]
 name = "ml"
-version = "0.1.0"
+version = "0.2.0"
+
+[[package]]
+name = "calculus"
+version = "0.3.1"
+source = "local"
+direct = true
+path = "./vendor/calculus"
+version-req = "^0.3.1"
 
 [[package]]
 name = "matrix"
 version = "0.2.0"
 source = "local"
 direct = false
-root-path = "\\?\C:\Users\upaas\vani-probability\vendor\matrix"
+root-path = "/home/virgo/source/vani-ml/vendor/probability/vendor/matrix"
 
 [[package]]
 name = "optimize"
 version = "0.1.4"
 source = "local"
 direct = true
-path = "../vani-optimize"
+path = "./vendor/optimize"
 version-req = "^0.1.4"
 
 [[package]]
@@ -26,5 +34,5 @@ name = "probability"
 version = "0.4.6"
 source = "local"
 direct = true
-path = "../vani-probability"
+path = "./vendor/probability"
 version-req = "^0.4.2"

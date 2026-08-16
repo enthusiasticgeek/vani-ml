@@ -1,0 +1,52 @@
+// A quick tour of vani-ml v0.3.0's autodiff core: build a small
+// computation graph, forward-evaluate it, and get every partial
+// derivative back via one reverse-mode backward pass.
+// Run with:  vanic run examples/autodiff_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // f(x, y) = (x*y + x) / y, at x=3, y=2
+    //   = (3*2 + 3) / 2 = 9/2 = 4.5
+    //   df/dx = (y+1)/y = 3/2 = 1.5
+    //   df/dy = -x/y^2 = -3/4 = -0.75
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 3.0);
+    let y: i64 = graph_param(mut ref arena, 2.0);
+    let xy: i64 = graph_mul(mut ref arena, x, y);
+    let numerator: i64 = graph_add(mut ref arena, xy, x);
+    let root: i64 = graph_div(mut ref arena, numerator, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    print "f(x, y) = (x*y + x) / y   (expect 4.5):";
+    print values[root];
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    print "df/dx  (expect 1.5):";
+    print grads[x];
+    print "df/dy  (expect -0.75):";
+    print grads[y];
+
+    // A shared value used twice: g(x) = x*x, gradient must SUM both
+    // paths' contributions (2x), not just one (x) -- the whole point of
+    // reverse-mode AD over a DAG rather than a tree.
+    let arena2: Vec<GraphNode> = graph_arena_new();
+    let a: i64 = graph_param(mut ref arena2, 5.0);
+    let sq: i64 = graph_mul(mut ref arena2, a, a);
+    let values2: Vec<f64> = graph_forward(ref arena2);
+    print "g(x) = x*x, at x=5  (expect 25):";
+    print values2[sq];
+    let grads2: Vec<f64> = graph_backward(ref arena2, ref values2, sq);
+    print "dg/dx  (expect 10):";
+    print grads2[a];
+
+    // graph_set_value mutates a Param's stored value in place -- the
+    // hook a future optimizer step (v0.5.0) will call between training
+    // iterations. Re-running forward after a mutation picks it up.
+    let _s: i64 = graph_set_value(mut ref arena2, a, 10.0);
+    let values3: Vec<f64> = graph_forward(ref arena2);
+    print "after graph_set_value(a, 10.0), g(x)  (expect 100):";
+    print values3[sq];
+
+    return 0;
+}

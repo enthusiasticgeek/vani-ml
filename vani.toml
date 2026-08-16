@@ -1,6 +1,6 @@
 [package]
 name    = "ml"
-version = "0.2.0"
+version = "0.3.0"
 entry   = "src/lib.vani"
 authors = "enthusiasticgeek"
 license = "MIT"
@@ -16,9 +16,17 @@ registry = "kosh"
 probability = { path = "./vendor/probability", version = "^0.4.2" }
 optimize    = { path = "./vendor/optimize", version = "^0.1.4" }
 
-# v0.3.0+ (autodiff core / layers) will add:
-#   matrix = { path = "./vendor/matrix", version = "^0.2.0" }
-#   tensor = { path = "./vendor/tensor", version = "^0.1.0" }
-# Not declared yet -- only declare what the current phase actually uses,
-# matching this ecosystem's existing convention (see vani-symbolic's
-# vani.toml, vani-optimize's vani.toml).
+# calculus: vendored via `vanic add calculus` for v0.3.0's tests ONLY --
+# production graph_forward/graph_backward have zero calculus:: calls.
+# Its diff_central (central-difference numeric derivative) is the
+# reference tests/test_graph_core.vani cross-checks graph_backward's
+# analytic gradients against, matching vani-symbolic's own v0.3.0
+# precedent (same cross-check, same function, different repo).
+#
+# matrix/tensor deliberately NOT added yet -- v0.3.0's node arena stores
+# one f64 per node directly, never touching vani-tensor's N-D
+# functionality; that's a real v0.4.0 concern (dense/matmul layers), not
+# this phase's. Add when v0.4.0 actually needs it, matching this
+# ecosystem's "only declare what the current phase actually uses"
+# convention (see vani-optimize's vani.toml for the same discipline).
+calculus = { path = "./vendor/calculus", version = "^0.3.1" }

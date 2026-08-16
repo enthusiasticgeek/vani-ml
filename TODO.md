@@ -90,21 +90,89 @@ Depends on: v0.1.0.
       individual fold's train+test also sums back to the whole set).
       Full suite + `vanic audit-safety` re-verified on both backends.
 
-## v0.3.0 — Autodiff core (not started) — highest-risk phase
+## v0.3.0 — Autodiff core ✅ implemented 2026-08-16 — highest-risk phase
 
-Depends on: v0.2.0, vani-tensor (value storage; not yet a declared dep — add when
-this phase starts).
+Depends on: v0.2.0. **vani-tensor deliberately NOT added as a dependency**
+(see below) — the roadmap's "value storage" note turned out not to apply
+to this phase's actual design.
 
-- [ ] Flat arena: `Vec<Node>` + `i64` child indices + node-kind tags (same pattern
-      as vani-symbolic's expression arena)
-- [ ] Forward evaluation over the arena
-- [ ] Reverse-mode backward pass — gradients accumulated into a `mut ref
-      Vec<f64>` buffer passed explicitly through every call, **not** a
-      ref-capturing closure (unsupported — compiler path-D, deferred
-      indefinitely; see this repo's README and kosh-index/ROADMAP.md)
-- [ ] Validation: finite-difference gradient checking against every node kind
-      (numeric gradient ≈ autodiff gradient within tolerance) — this is the
-      primary correctness gate for this phase, not hand-picked examples
+- [x] Flat arena: `Vec<GraphNode>` + `i64` child indices + node-kind tags
+      (`GraphNode { kind, value, left, right }`, same pattern as
+      vani-symbolic's `ExprNode`). **Departure from vani-symbolic**: no
+      symbol table — autodiff graphs are built directly via function
+      calls (never parsed from names), so a caller who wants to reuse a
+      value just reuses the `i64` index a constructor already returned
+      them. This means the SAME index can legitimately be two different
+      nodes' child — a real DAG, not just a tree — which reverse-mode
+      autodiff must handle correctly (gradient contributions from every
+      use of a value must SUM, not overwrite). Kind tags: `0=Const
+      1=Param 2=Add 3=Sub 4=Mul 5=Div 6=Neg`. `Pow` deliberately left out
+      of scope — `f(x)=x*x` (same index as both `graph_mul` operands)
+      already exercises the DAG-accumulation case without it.
+- [x] Forward evaluation over the arena — `graph_forward`, a single
+      ascending `while` loop (no recursion): because the arena is
+      append-only, a node's children always have a lower index than the
+      node itself, so evaluating index order 0..n-1 is always correct.
+- [x] Reverse-mode backward pass — `graph_backward`, a single
+      **descending** `while` loop from n-1 to 0, seeded with
+      `grads[root]=1.0`: by the time node `i` is processed, every
+      possible consumer of node `i` (strictly higher index) has already
+      run and added its contribution via `+=`, so `grads[i]` is
+      guaranteed final. Standard reverse-mode-AD algorithm (same one
+      micrograd/PyTorch's tape-based autograd use); the append-only
+      arena gets the correct traversal order for free, no topo-sort
+      needed. Gradients accumulated into a freshly-returned `Vec<f64>`
+      (not a `mut ref` out-parameter — this ecosystem's dominant
+      "return a new Vec" convention, e.g. `tensor_zeros`/`tensor_add`);
+      the roadmap's "`mut ref Vec<f64>` buffer threaded explicitly"
+      language is about avoiding ref-capturing closures internally, not
+      the public API's shape. No ref-capturing closures anywhere in this
+      phase (compiler path-D, deferred indefinitely).
+- [x] Validation: finite-difference gradient checking against every node
+      kind (`tests/test_graph_core.vani`, 9 tests), genuinely
+      cross-checked against `calculus::diff_central` (same cross-package
+      validation vani-symbolic's own v0.3.0 used against the same
+      function) — one test per kind (Add/Sub/Mul/Div/Neg), a dedicated
+      **DAG/shared-node accumulation** test (`f(x)=x*x`, catches the
+      exact "overwrite instead of accumulate" bug class this design has
+      to get right), a **composed** test mixing all three binary ops in
+      one graph (`f(x,y)=(x*y+x)/y`, checked at both params), a Const-leaf
+      test, and a `graph_set_value` test. All 9 pass on both backends.
+      `examples/autodiff_demo.vani` (new file, both backends verified)
+      walks through the same composed example plus the shared-node case.
+
+**Found during implementation, not before scoping**: the checker doesn't
+reborrow a `mut ref` binding as `ref` at a call site — same limitation
+vani-symbolic's own `sym_add` already documents hitting (confirmed with
+the identical error message). This ruled out a shared finite-difference
+helper taking `arena: mut ref Vec<GraphNode>` (would need to call both
+`graph_set_value`, which wants `mut ref`, and `graph_forward`, which
+wants `ref`, on the same re-borrowed parameter) — the perturb/forward/
+restore logic is inlined into every test instead, matching
+vani-symbolic's own documented workaround exactly rather than
+rediscovering a new one.
+
+**Scope note on `vani-tensor`**: the roadmap listed vani-tensor ("value
+storage") as a v0.3.0 dependency, but this design stores one `f64` per
+node directly in the arena/tape — it never touches vani-tensor's N-D
+functionality. That's a real v0.4.0 concern (matmul/dense layers), not
+this phase's. Not declared as a dependency here; will be added when
+v0.4.0 actually exercises it, matching this ecosystem's "only declare
+what the current phase actually uses" convention.
+
+Full verification: `vanic audit-safety` reports full `#[bounded_stack]`/
+`#[wcet]` coverage (37 functions checked, 0 gaps) — `graph_forward`/
+`graph_backward` are Vec-length-loop-bounded (a WCET formula comment,
+not a literal attribute, same treatment as vani-symbolic's
+Vec-length-loop-bounded functions) — the other 9 new functions carry
+`vanic check`'s own exact reported worst-case for both attributes, per
+MAINT-1 discipline. Full `vanic test` suite (all 6 test files, both
+backends) and both examples (both backends) pass. Full SMT verification
+(`vanic check` without `--no-verify`) hangs on this package — confirmed
+**pre-existing**, not caused by this phase's code: an unmodified test
+file (`tests/test_linreg.vani`) hangs identically. Same
+verifier-performance class already found in vani-pde and
+vani-probability this session, not a real defect.
 
 ## v0.4.0 — Layers, activations, losses (not started)
 

@@ -1,0 +1,260 @@
+use "../src/lib.vani";
+use "../vendor/calculus/src/lib.vani";
+
+// Finite-difference gradient checking: the primary correctness gate for
+// this phase (per kosh-index/ROADMAP.md's own risk note -- "a wrong
+// gradient rule silently poisons every layer built on it"). Every test
+// below cross-checks graph_backward's analytic gradient against
+// calculus::diff_central (central-difference numeric derivative), the
+// same cross-package validation vani-symbolic's own v0.3.0 used against
+// the same function.
+//
+// The perturb/forward/restore steps are inlined into every test rather
+// than factored into a shared helper: the checker doesn't reborrow a
+// `mut ref` binding as `ref` at a call site (confirmed directly --
+// "argument 1 ... must be assignable to ref Vec<GraphNode>, got mut ref
+// Vec<GraphNode>" -- same limitation vani-symbolic's own sym_add
+// documents hitting and inlines around). `arena` here is always a plain
+// owned local (not a re-borrowed ref parameter), so `mut ref arena` /
+// `ref arena` both work freely within each test's own body.
+
+#[test]
+fn test_graph_add_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 3.0);
+    let y: i64 = graph_param(mut ref arena, 4.0);
+    let root: i64 = graph_add(mut ref arena, x, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 7.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 3.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 3.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let _s3: i64 = graph_set_value(mut ref arena, x, 3.0);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+
+    let _s4: i64 = graph_set_value(mut ref arena, y, 4.0 + h);
+    let vph2: Vec<f64> = graph_forward(ref arena);
+    let _s5: i64 = graph_set_value(mut ref arena, y, 4.0 - h);
+    let vmh2: Vec<f64> = graph_forward(ref arena);
+    let numeric_dy: f64 = calculus::diff_central(vmh2[root], vph2[root], h);
+    assert abs(grads[y] - numeric_dy) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_sub_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 10.0);
+    let y: i64 = graph_param(mut ref arena, 3.0);
+    let root: i64 = graph_sub(mut ref arena, x, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 7.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 10.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 10.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let _s3: i64 = graph_set_value(mut ref arena, x, 10.0);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+
+    let _s4: i64 = graph_set_value(mut ref arena, y, 3.0 + h);
+    let vph2: Vec<f64> = graph_forward(ref arena);
+    let _s5: i64 = graph_set_value(mut ref arena, y, 3.0 - h);
+    let vmh2: Vec<f64> = graph_forward(ref arena);
+    let numeric_dy: f64 = calculus::diff_central(vmh2[root], vph2[root], h);
+    assert abs(grads[y] - numeric_dy) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_mul_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 3.0);
+    let y: i64 = graph_param(mut ref arena, 4.0);
+    let root: i64 = graph_mul(mut ref arena, x, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 12.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 3.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 3.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let _s3: i64 = graph_set_value(mut ref arena, x, 3.0);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+
+    let _s4: i64 = graph_set_value(mut ref arena, y, 4.0 + h);
+    let vph2: Vec<f64> = graph_forward(ref arena);
+    let _s5: i64 = graph_set_value(mut ref arena, y, 4.0 - h);
+    let vmh2: Vec<f64> = graph_forward(ref arena);
+    let numeric_dy: f64 = calculus::diff_central(vmh2[root], vph2[root], h);
+    assert abs(grads[y] - numeric_dy) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_div_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 6.0);
+    let y: i64 = graph_param(mut ref arena, 4.0);
+    let root: i64 = graph_div(mut ref arena, x, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 1.5) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 6.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 6.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let _s3: i64 = graph_set_value(mut ref arena, x, 6.0);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+
+    let _s4: i64 = graph_set_value(mut ref arena, y, 4.0 + h);
+    let vph2: Vec<f64> = graph_forward(ref arena);
+    let _s5: i64 = graph_set_value(mut ref arena, y, 4.0 - h);
+    let vmh2: Vec<f64> = graph_forward(ref arena);
+    let numeric_dy: f64 = calculus::diff_central(vmh2[root], vph2[root], h);
+    assert abs(grads[y] - numeric_dy) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_neg_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 5.0);
+    let root: i64 = graph_neg(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - (0.0 - 5.0)) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 5.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 5.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+// DAG/shared-node accumulation: the SAME arena index (x) passed as BOTH
+// graph_mul operands. d(x*x)/dx = 2x -- if the backward pass wrongly
+// OVERWRITES grads[x] instead of accumulating with +=, this would come
+// out to just x (one contribution lost), not 2x. This is the canonical
+// test that reverse-mode AD's core correctness property (gradients
+// SUM across every use of a value) actually holds here.
+#[test]
+fn test_graph_shared_node_accumulation() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 5.0);
+    let root: i64 = graph_mul(mut ref arena, x, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 25.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    assert abs(grads[x] - 10.0) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 5.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 5.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+// Composed: f(x, y) = (x*y + x) / y -- mixes Mul/Add/Div in one graph,
+// gradient checked at both params, to catch integration bugs between
+// ops that isolated per-kind tests above wouldn't.
+#[test]
+fn test_graph_composed_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 3.0);
+    let y: i64 = graph_param(mut ref arena, 2.0);
+    let xy: i64 = graph_mul(mut ref arena, x, y);
+    let num: i64 = graph_add(mut ref arena, xy, x);
+    let root: i64 = graph_div(mut ref arena, num, y);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 4.5) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-5;
+
+    let _s1: i64 = graph_set_value(mut ref arena, x, 3.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 3.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let _s3: i64 = graph_set_value(mut ref arena, x, 3.0);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+
+    let _s4: i64 = graph_set_value(mut ref arena, y, 2.0 + h);
+    let vph2: Vec<f64> = graph_forward(ref arena);
+    let _s5: i64 = graph_set_value(mut ref arena, y, 2.0 - h);
+    let vmh2: Vec<f64> = graph_forward(ref arena);
+    let numeric_dy: f64 = calculus::diff_central(vmh2[root], vph2[root], h);
+    assert abs(grads[y] - numeric_dy) < 1.0e-6;
+    return 0;
+}
+
+// Const leaves never propagate a gradient -- also exercises kind=0
+// specifically (every test above only used Param leaves).
+#[test]
+fn test_graph_const_does_not_receive_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let c: i64 = graph_const(mut ref arena, 2.0);
+    let x: i64 = graph_param(mut ref arena, 5.0);
+    let root: i64 = graph_mul(mut ref arena, c, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 10.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    // grads[c] is never meant to be read (Const isn't trainable), but it
+    // still gets a mechanically-correct value (2.0's "gradient" would be
+    // x=5.0 if it WERE read) -- this test only asserts the Param side.
+    assert abs(grads[x] - 2.0) < 1.0e-9;
+    return 0;
+}
+
+// graph_set_value refuses to mutate a Const (asserts kind==1) -- can't
+// express a "traps" test without this framework's #[should_panic]
+// support, so this documents the guard by exercising the success path
+// (mutating a real Param) and leaving the trap path as a manual check
+// (see TODO.md's closure writeup for the verification note).
+#[test]
+fn test_graph_set_value_updates_param() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 1.0);
+    let _s: i64 = graph_set_value(mut ref arena, x, 9.0);
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[x] - 9.0) < 1.0e-9;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }

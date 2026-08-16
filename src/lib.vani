@@ -750,3 +750,236 @@ fn k_fold_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i64, k
         X_test: X_test, y_test: y_test, n_test: n_test,
     };
 }
+
+// ── v0.3.0: Autodiff core (computation graph) ───────────────────────────────
+//
+// ENCODING: flat arena, same "Vec<Node> + i64 child indices, kind-tag
+// dispatch" workaround vani-symbolic uses for its expression tree (a
+// recursive enum doesn't compile in vāṇी today -- see vani-symbolic's own
+// header comment for the full rationale). GraphNode is Copy (four
+// fields, no heap-owning field), matching ExprNode's own precedent.
+//
+//   struct GraphNode { kind: i64, value: f64, left: i64, right: i64 }
+//
+// kind tags: 0=Const 1=Param 2=Add 3=Sub 4=Mul 5=Div 6=Neg
+//
+// DEPARTURE from vani-symbolic's pattern: no symbol table. Expression
+// trees are parsed from named variables that can be referenced from
+// multiple places by name; autodiff graphs are never parsed -- they're
+// built directly via function calls, so a caller who wants to reuse a
+// value just reuses the i64 index graph_param/graph_const already
+// returned them (e.g. `let x: i64 = graph_param(mut ref arena, 1.0);
+// let y: i64 = graph_mul(mut ref arena, x, x);` -- same `x` passed
+// twice). This means the SAME arena index can legitimately be two
+// different nodes' child -- a real DAG, not just a tree -- which is
+// exactly the case reverse-mode autodiff must handle correctly (a value
+// used twice must receive the SUM of both paths' gradient
+// contributions, not just one).
+//
+// NO RECURSION, NO TOPOLOGICAL SORT NEEDED: because the arena is
+// append-only and a node's left/right children must already exist
+// (lower indices) before the node referencing them can be constructed,
+// arena indices are already in topological order by construction.
+// graph_forward is a single ascending loop (each node's value depends
+// only on already-computed lower-index values); graph_backward is a
+// single DESCENDING loop seeded with grads[root]=1.0 (by the time node
+// i is processed, every possible consumer of node i -- which must have
+// a strictly higher index -- has already run and already added its
+// contribution to grads[i] via +=, so grads[i] is guaranteed final the
+// moment node i's own backward step runs). This is the standard
+// reverse-mode-AD algorithm (same one micrograd/PyTorch's tape-based
+// autograd use); the append-only arena gets the correct traversal order
+// for free, no separate topo-sort pass needed.
+//
+// Const vs. Param: functionally identical to both passes (both are
+// leaves: forward returns the stored value, backward doesn't propagate
+// further) -- kept as separate tags purely so a caller can tell which
+// leaf indices are meant to be read back out of grads[] afterward.
+// graph_set_value only accepts Param (asserts kind==1), the hook a
+// future optimizer step will call between training iterations.
+//
+// Pow is deliberately NOT included in this phase: `f(x) = x*x` (the
+// SAME arena index passed as both graph_mul operands) already exercises
+// the DAG/shared-node accumulation case (d(x*x)/dx = 2x) without
+// needing a dedicated kind. Activations/losses are explicitly v0.4.0
+// scope, not added here.
+//
+// WCET (MAINT-1 discipline, see kosh-index/ROADMAP.md): every
+// #[wcet(cycles=N)] below is vanic check's own exact reported worst-case,
+// never hand-derived. The 9 fixed-shape construction/mutation functions
+// get a real #[wcet]; graph_forward/graph_backward are Vec-length-loop-
+// bounded (a runtime value, same as vani-symbolic's sym_eval) and get a
+// WCET *formula* comment instead.
+
+struct GraphNode {
+    kind: i64,
+    value: f64,
+    left: i64,
+    right: i64,
+}
+
+// ── Construction ─────────────────────────────────────────────────────────
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 85)]
+fn graph_arena_new() -> Vec<GraphNode> {
+    return vec();
+}
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 36)]
+fn graph_const(arena: mut ref Vec<GraphNode>, v: f64) -> i64 {
+    push(arena, GraphNode { kind: 0, value: v, left: 0 - 1, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 36)]
+fn graph_param(arena: mut ref Vec<GraphNode>, v: f64) -> i64 {
+    push(arena, GraphNode { kind: 1, value: v, left: 0 - 1, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 60)]
+fn graph_add(arena: mut ref Vec<GraphNode>, a: i64, b: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    assert b >= 0 && b < (len(arena) as i64);
+    push(arena, GraphNode { kind: 2, value: 0.0, left: a, right: b });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 60)]
+fn graph_sub(arena: mut ref Vec<GraphNode>, a: i64, b: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    assert b >= 0 && b < (len(arena) as i64);
+    push(arena, GraphNode { kind: 3, value: 0.0, left: a, right: b });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 60)]
+fn graph_mul(arena: mut ref Vec<GraphNode>, a: i64, b: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    assert b >= 0 && b < (len(arena) as i64);
+    push(arena, GraphNode { kind: 4, value: 0.0, left: a, right: b });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 64)]
+#[wcet(cycles = 60)]
+fn graph_div(arena: mut ref Vec<GraphNode>, a: i64, b: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    assert b >= 0 && b < (len(arena) as i64);
+    push(arena, GraphNode { kind: 5, value: 0.0, left: a, right: b });
+    return (len(arena) as i64) - 1;
+}
+
+// Unary: right stays -1, arity is a pure function of kind (never stored
+// per-node), matching vani-symbolic's Neg convention exactly.
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 48)]
+fn graph_neg(arena: mut ref Vec<GraphNode>, a: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    push(arena, GraphNode { kind: 6, value: 0.0, left: a, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+// Mutates a Param leaf's stored value in place -- the hook a future
+// optimizer step calls between training iterations. Asserts Param, not
+// Const: mutating what's meant to be a fixed constant is a caller bug.
+#[bounded_stack(bytes = 96)]
+#[wcet(cycles = 68)]
+fn graph_set_value(arena: mut ref Vec<GraphNode>, idx: i64, v: f64) -> i64 {
+    assert idx >= 0 && idx < (len(arena) as i64);
+    assert arena[idx].kind == 1;
+    let node: GraphNode = arena[idx];
+    set(arena, idx, GraphNode { kind: node.kind, value: v, left: node.left, right: node.right });
+    return 0;
+}
+
+// ── Forward / backward passes ────────────────────────────────────────────
+
+// Evaluates every node 0..n-1 in index order (children always have a
+// lower index than their parent, so this single ascending pass is
+// always correct regardless of which node is the eventual "root").
+// Returns the full tape -- graph_backward needs every node's value, not
+// just the root's, to compute local derivatives (e.g. d(mul)/d(left) =
+// right's value).
+// NO #[wcet]: len(arena) is a runtime value.
+// WCET formula: ~25 * (number of nodes in the arena).
+#[bounded_stack(bytes = 160)]
+fn graph_forward(arena: ref Vec<GraphNode>) -> Vec<f64> {
+    let n: i64 = len(arena) as i64;
+    let values: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let node: GraphNode = arena[i];
+        let v: f64 = 0.0;
+        if node.kind == 0 {
+            v = node.value;
+        } else if node.kind == 1 {
+            v = node.value;
+        } else if node.kind == 2 {
+            v = values[node.left] + values[node.right];
+        } else if node.kind == 3 {
+            v = values[node.left] - values[node.right];
+        } else if node.kind == 4 {
+            v = values[node.left] * values[node.right];
+        } else if node.kind == 5 {
+            assert values[node.right] != 0.0;
+            v = values[node.left] / values[node.right];
+        } else {
+            v = 0.0 - values[node.left];
+        }
+        push(mut ref values, v);
+        i = i + 1;
+    }
+    return values;
+}
+
+// Reverse-mode backward pass: returns a fresh grads: Vec<f64> (length
+// len(arena)), all zero except at `root` (seeded to 1.0), accumulated by
+// a single descending scan -- see this function's section header
+// comment above for why descending-index order alone guarantees each
+// node's incoming gradient is final before its own backward step runs.
+// NO #[wcet]: len(arena) is a runtime value.
+// WCET formula: ~30 * (number of nodes in the arena).
+#[bounded_stack(bytes = 192)]
+fn graph_backward(arena: ref Vec<GraphNode>, values: ref Vec<f64>, root: i64) -> Vec<f64> {
+    let n: i64 = len(arena) as i64;
+    assert root >= 0 && root < n;
+    let grads: Vec<f64> = vec();
+    let z: i64 = 0;
+    while z < n {
+        push(mut ref grads, 0.0);
+        z = z + 1;
+    }
+    set(mut ref grads, root, 1.0);
+
+    let i: i64 = n - 1;
+    while i >= 0 {
+        let node: GraphNode = arena[i];
+        let g: f64 = grads[i];
+        if node.kind == 2 {
+            set(mut ref grads, node.left, grads[node.left] + g);
+            set(mut ref grads, node.right, grads[node.right] + g);
+        } else if node.kind == 3 {
+            set(mut ref grads, node.left, grads[node.left] + g);
+            set(mut ref grads, node.right, grads[node.right] - g);
+        } else if node.kind == 4 {
+            set(mut ref grads, node.left, grads[node.left] + g * values[node.right]);
+            set(mut ref grads, node.right, grads[node.right] + g * values[node.left]);
+        } else if node.kind == 5 {
+            let rv: f64 = values[node.right];
+            set(mut ref grads, node.left, grads[node.left] + g / rv);
+            set(mut ref grads, node.right, grads[node.right] + g * (0.0 - values[node.left]) / (rv * rv));
+        } else if node.kind == 6 {
+            set(mut ref grads, node.left, grads[node.left] - g);
+        }
+        // kind 0 (Const) / 1 (Param): leaf, no children to propagate to.
+        i = i - 1;
+    }
+    return grads;
+}
