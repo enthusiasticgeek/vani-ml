@@ -1,6 +1,6 @@
 [package]
 name    = "ml"
-version = "0.3.0"
+version = "0.4.0"
 entry   = "src/lib.vani"
 authors = "enthusiasticgeek"
 license = "MIT"

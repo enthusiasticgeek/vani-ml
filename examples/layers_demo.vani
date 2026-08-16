@@ -1,0 +1,46 @@
+// A quick tour of vani-ml v0.4.0's layers/activations/losses: a tiny
+// one-neuron "network" (dense layer -> sigmoid -> binary cross-entropy),
+// forward-evaluated and back-propagated through in one call each.
+// Run with:  vanic run examples/layers_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // 2 inputs -> 1 dense unit -> sigmoid -> binary cross-entropy loss
+    // against target=1.0. inputs are fixed (Const); weights/bias are
+    // Params -- exactly what a real training step would treat as
+    // trainable.
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x0: i64 = graph_const(mut ref arena, 1.0);
+    let x1: i64 = graph_const(mut ref arena, 0.0 - 1.0);
+    let w0: i64 = graph_param(mut ref arena, 0.5);
+    let w1: i64 = graph_param(mut ref arena, 0.5);
+    let bias: i64 = graph_param(mut ref arena, 0.0);
+
+    let inputs: Vec<i64> = vec(x0, x1);
+    let weights: Vec<i64> = vec(w0, w1);
+    let z: i64 = graph_dense(mut ref arena, ref inputs, ref weights, bias);
+    let pred: i64 = graph_sigmoid(mut ref arena, z);
+
+    let preds: Vec<i64> = vec(pred);
+    let targets: Vec<f64> = vec(1.0);
+    let loss: i64 = graph_binary_cross_entropy_loss(mut ref arena, ref preds, ref targets);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    print "dense output z (expect 0.0, since x0*w0 + x1*w1 = 0.5 - 0.5):";
+    print values[z];
+    print "sigmoid(z) prediction (expect 0.5):";
+    print values[pred];
+    print "binary cross-entropy loss vs target=1.0 (expect -log(0.5)):";
+    print values[loss];
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, loss);
+    print "d(loss)/d(w0):";
+    print grads[w0];
+    print "d(loss)/d(w1):";
+    print grads[w1];
+    print "d(loss)/d(bias):";
+    print grads[bias];
+
+    return 0;
+}

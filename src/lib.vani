@@ -16,7 +16,7 @@
 // layout -- row i, column j lives at X_flat[i * n_pred + j].
 //
 // IMPORTANT -- do NOT reimplement vāṇी compiler builtins already used
-// throughout this file: push len vec sqrt exp log f64_sigmoid abs
+// throughout this file: push len vec sqrt exp log tanh f64_sigmoid abs
 // seed_rng rand_in_range rand_in_range_f64 vec_swap vec_mean i64_min
 
 // ── Linear regression ────────────────────────────────────────────────────
@@ -930,8 +930,21 @@ fn graph_forward(arena: ref Vec<GraphNode>) -> Vec<f64> {
         } else if node.kind == 5 {
             assert values[node.right] != 0.0;
             v = values[node.left] / values[node.right];
-        } else {
+        } else if node.kind == 6 {
             v = 0.0 - values[node.left];
+        } else if node.kind == 7 {
+            if values[node.left] > 0.0 {
+                v = values[node.left];
+            } else {
+                v = 0.0;
+            }
+        } else if node.kind == 8 {
+            v = f64_sigmoid(values[node.left]);
+        } else if node.kind == 9 {
+            v = tanh(values[node.left]);
+        } else {
+            assert values[node.left] > 0.0;
+            v = log(values[node.left]);
         }
         push(mut ref values, v);
         i = i + 1;
@@ -946,7 +959,7 @@ fn graph_forward(arena: ref Vec<GraphNode>) -> Vec<f64> {
 // node's incoming gradient is final before its own backward step runs.
 // NO #[wcet]: len(arena) is a runtime value.
 // WCET formula: ~30 * (number of nodes in the arena).
-#[bounded_stack(bytes = 192)]
+#[bounded_stack(bytes = 200)]
 fn graph_backward(arena: ref Vec<GraphNode>, values: ref Vec<f64>, root: i64) -> Vec<f64> {
     let n: i64 = len(arena) as i64;
     assert root >= 0 && root < n;
@@ -977,9 +990,177 @@ fn graph_backward(arena: ref Vec<GraphNode>, values: ref Vec<f64>, root: i64) ->
             set(mut ref grads, node.right, grads[node.right] + g * (0.0 - values[node.left]) / (rv * rv));
         } else if node.kind == 6 {
             set(mut ref grads, node.left, grads[node.left] - g);
+        } else if node.kind == 7 {
+            let relu_deriv: f64 = 0.0;
+            if values[node.left] > 0.0 {
+                relu_deriv = 1.0;
+            }
+            set(mut ref grads, node.left, grads[node.left] + g * relu_deriv);
+        } else if node.kind == 8 {
+            let sv: f64 = values[i];
+            set(mut ref grads, node.left, grads[node.left] + g * sv * (1.0 - sv));
+        } else if node.kind == 9 {
+            let tv: f64 = values[i];
+            set(mut ref grads, node.left, grads[node.left] + g * (1.0 - tv * tv));
+        } else if node.kind == 10 {
+            set(mut ref grads, node.left, grads[node.left] + g / values[node.left]);
         }
         // kind 0 (Const) / 1 (Param): leaf, no children to propagate to.
         i = i - 1;
     }
     return grads;
+}
+
+// ── v0.4.0: Layers, activations, losses ──────────────────────────────────
+//
+// New unary node kinds: 7=Relu 8=Sigmoid 9=Tanh 10=Log -- each takes one
+// child (right stays -1, same convention as Neg). graph_forward/
+// graph_backward above already had their kind-dispatch structured as a
+// chain of if/else-if branches specifically so adding a kind here means
+// extending that chain, not restructuring it.
+//
+// Sigmoid/Tanh's backward rules reuse the ALREADY-COMPUTED forward value
+// (values[i] IS sigmoid(x) / tanh(x) by the time backward runs) rather
+// than recomputing sigmoid(x)*(1-sigmoid(x)) from x itself -- avoids a
+// redundant f64_sigmoid/tanh call and matches how Mul/Div already reuse
+// `values[node.left]`/`values[node.right]` instead of re-deriving them.
+//
+// Log's forward pass asserts values[left] > 0.0, matching this
+// ecosystem's "assert on out-of-scope input" convention (e.g.
+// bn_div_mod's nonzero-divisor assert) -- log(x) for x<=0 is undefined,
+// not a case to silently propagate a NaN through.
+//
+// Softmax is deliberately NOT added: it's inherently a multi-output op
+// (every output depends on every input in its group), a structural
+// mismatch with this one-node-one-scalar design without a real
+// extension (vector-valued nodes) this phase doesn't need. This
+// package's classification support has always been binary only (see
+// v0.1.0's logreg_*, cross-entropy loss below is the same binary form,
+// sigmoid not softmax) -- multi-class support is a real future phase,
+// not silently dropped scope.
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 48)]
+fn graph_relu(arena: mut ref Vec<GraphNode>, a: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    push(arena, GraphNode { kind: 7, value: 0.0, left: a, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 48)]
+fn graph_sigmoid(arena: mut ref Vec<GraphNode>, a: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    push(arena, GraphNode { kind: 8, value: 0.0, left: a, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 48)]
+fn graph_tanh(arena: mut ref Vec<GraphNode>, a: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    push(arena, GraphNode { kind: 9, value: 0.0, left: a, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+#[bounded_stack(bytes = 56)]
+#[wcet(cycles = 48)]
+fn graph_log(arena: mut ref Vec<GraphNode>, a: i64) -> i64 {
+    assert a >= 0 && a < (len(arena) as i64);
+    push(arena, GraphNode { kind: 10, value: 0.0, left: a, right: 0 - 1 });
+    return (len(arena) as i64) - 1;
+}
+
+// Dense/linear layer: dot(inputs, weights) + bias, built by composing
+// EXISTING graph_mul/graph_add calls rather than adding a dedicated
+// "Dense" node kind -- matmul emerges naturally from scalar-op
+// composition, matching how MSE/cross-entropy below are also built from
+// primitives rather than new kinds. `inputs`/`weights` are parallel
+// arrays of arena indices (already-constructed Param/Const/expression
+// nodes), same length; `bias` is a single arena index (typically a
+// Param).
+// NO #[wcet]: len(inputs) is a runtime value.
+// WCET formula: ~20 + len(inputs) * (2 * graph_mul's 60 + graph_add's 60).
+#[bounded_stack(bytes = 184)]
+fn graph_dense(arena: mut ref Vec<GraphNode>, inputs: ref Vec<i64>, weights: ref Vec<i64>, bias: i64) -> i64 {
+    let n: i64 = len(inputs) as i64;
+    assert n == (len(weights) as i64);
+    assert n > 0;
+    let sum: i64 = graph_mul(arena, inputs[0], weights[0]);
+    let i: i64 = 1;
+    while i < n {
+        let term: i64 = graph_mul(arena, inputs[i], weights[i]);
+        sum = graph_add(arena, sum, term);
+        i = i + 1;
+    }
+    return graph_add(arena, sum, bias);
+}
+
+// Mean squared error loss: mean((preds[i] - targets[i])^2), built the
+// same "compose from primitives" way as graph_dense. `preds` are arena
+// indices (typically graph_dense's output, fed through an activation);
+// `targets` are plain f64 (ground-truth labels, wrapped in graph_const
+// internally -- a target is never itself a trainable Param).
+// NO #[wcet]: len(preds) is a runtime value.
+// WCET formula: ~20 + len(preds) * (graph_const's 36 + graph_sub's 60 +
+// graph_mul's 60 + graph_add's 60).
+#[bounded_stack(bytes = 216)]
+fn graph_mse_loss(arena: mut ref Vec<GraphNode>, preds: ref Vec<i64>, targets: ref Vec<f64>) -> i64 {
+    let n: i64 = len(preds) as i64;
+    assert n == (len(targets) as i64);
+    assert n > 0;
+    let t0: i64 = graph_const(arena, targets[0]);
+    let d0: i64 = graph_sub(arena, preds[0], t0);
+    let sum: i64 = graph_mul(arena, d0, d0);
+    let i: i64 = 1;
+    while i < n {
+        let ti: i64 = graph_const(arena, targets[i]);
+        let di: i64 = graph_sub(arena, preds[i], ti);
+        let sq: i64 = graph_mul(arena, di, di);
+        sum = graph_add(arena, sum, sq);
+        i = i + 1;
+    }
+    let inv_n: i64 = graph_const(arena, 1.0 / (n as f64));
+    return graph_mul(arena, sum, inv_n);
+}
+
+// One example's contribution to binary cross-entropy:
+// y*log(p) + (1-y)*log(1-p). Factored out of graph_binary_cross_entropy_
+// loss below purely to keep that function's own loop body short --
+// still just primitive-op composition, not a new node kind.
+#[bounded_stack(bytes = 192)]
+#[wcet(cycles = 512)]
+fn _graph_bce_term(arena: mut ref Vec<GraphNode>, pred: i64, target: f64, one: i64) -> i64 {
+    let y: i64 = graph_const(arena, target);
+    let one_minus_y: i64 = graph_sub(arena, one, y);
+    let log_p: i64 = graph_log(arena, pred);
+    let one_minus_p: i64 = graph_sub(arena, one, pred);
+    let log_1mp: i64 = graph_log(arena, one_minus_p);
+    let term1: i64 = graph_mul(arena, y, log_p);
+    let term2: i64 = graph_mul(arena, one_minus_y, log_1mp);
+    return graph_add(arena, term1, term2);
+}
+
+// Binary cross-entropy loss: -mean(y*log(p) + (1-y)*log(1-p)). `preds`
+// are arena indices already passed through graph_sigmoid (p must be in
+// (0,1) for graph_log's domain guard); `targets` are plain f64 labels in
+// {0.0, 1.0}, same convention as this package's existing logreg_* API.
+// NO #[wcet]: len(preds) is a runtime value.
+// WCET formula: ~30 + len(preds) * _graph_bce_term's ~350.
+#[bounded_stack(bytes = 328)]
+fn graph_binary_cross_entropy_loss(arena: mut ref Vec<GraphNode>, preds: ref Vec<i64>, targets: ref Vec<f64>) -> i64 {
+    let n: i64 = len(preds) as i64;
+    assert n == (len(targets) as i64);
+    assert n > 0;
+    let one: i64 = graph_const(arena, 1.0);
+    let sum: i64 = _graph_bce_term(arena, preds[0], targets[0], one);
+    let i: i64 = 1;
+    while i < n {
+        let term: i64 = _graph_bce_term(arena, preds[i], targets[i], one);
+        sum = graph_add(arena, sum, term);
+        i = i + 1;
+    }
+    let inv_n: i64 = graph_const(arena, 1.0 / (n as f64));
+    let mean: i64 = graph_mul(arena, sum, inv_n);
+    return graph_neg(arena, mean);
 }

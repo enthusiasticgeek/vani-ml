@@ -174,14 +174,49 @@ file (`tests/test_linreg.vani`) hangs identically. Same
 verifier-performance class already found in vani-pde and
 vani-probability this session, not a real defect.
 
-## v0.4.0 — Layers, activations, losses (not started)
+## v0.4.0 — Layers, activations, losses ✅ implemented 2026-08-16
 
 Depends on: v0.3.0.
 
-- [ ] Dense/linear layer (matmul + bias via vani-matrix/vani-tensor)
-- [ ] Activations as graph node kinds: relu, sigmoid, tanh, softmax
-- [ ] Losses as graph node kinds: MSE, cross-entropy
-- [ ] Each new node kind validated with the same finite-difference check as v0.3.0
+- [x] Dense/linear layer — `graph_dense(arena, inputs, weights, bias)`,
+      built by **composing existing `graph_mul`/`graph_add` calls**
+      rather than a dedicated node kind (matmul emerges from scalar-op
+      composition, matching how the losses below are also composed).
+      **Not built via vani-matrix/vani-tensor** as originally scoped —
+      this design's per-node scalar values never needed either, same
+      scope correction v0.3.0 already made explicit.
+- [x] Activations as graph node kinds: `graph_relu` (kind 7),
+      `graph_sigmoid` (kind 8, reuses the `f64_sigmoid` builtin),
+      `graph_tanh` (kind 9, reuses the `tanh` builtin). **`softmax`
+      deliberately NOT added** — it's inherently multi-output (every
+      output in a group depends on every input), a structural mismatch
+      with this one-node-one-scalar design; this package's
+      classification support has always been binary-only (see v0.1.0's
+      `logreg_*`), so binary cross-entropy (below) covers the loss side
+      without it. A documented scope narrowing, not silently dropped.
+- [x] Losses: `graph_mse_loss` and `graph_binary_cross_entropy_loss`,
+      both composed from existing primitives (`graph_sub`/`graph_mul`/
+      `graph_add`/`graph_const`, plus a new `graph_log` node kind 10 for
+      cross-entropy) — no dedicated "Loss" node kind, same composition
+      philosophy as the dense layer.
+- [x] Each new node kind validated with the same finite-difference check
+      as v0.3.0 (`tests/test_graph_layers.vani`, 9 tests, cross-checked
+      against `calculus::diff_central`): Relu on both its positive and
+      negative branches separately (the kink at 0 makes a single
+      straddling test meaningless), Sigmoid, Tanh, Log, an
+      activation-composition test (`Relu(Sigmoid(x))`-shaped chain,
+      proving the new kinds compose through the same backward machinery
+      with no special-casing), a dense-layer test (forward value +
+      per-weight gradient), an MSE test, and a binary-cross-entropy test
+      (gradient matches the standard closed-form `sigmoid(z) - target`
+      combined rule exactly — confirmed both analytically and via
+      `examples/layers_demo.vani`'s worked hand-checkable example).
+
+Full verification: `vanic audit-safety` reports full `#[bounded_stack]`/
+`#[wcet]` coverage (45 functions checked, 0 gaps). Full `vanic test`
+suite (all 8 test files, both backends) and all 3 examples (both
+backends) pass. `examples/layers_demo.vani` (new file) walks through a
+one-neuron dense->sigmoid->binary-cross-entropy chain end to end.
 
 ## v0.5.0 — Optimizers over the graph (not started)
 

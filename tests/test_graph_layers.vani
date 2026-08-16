@@ -1,0 +1,224 @@
+use "../src/lib.vani";
+use "../vendor/calculus/src/lib.vani";
+
+// v0.4.0: activations (Relu/Sigmoid/Tanh), Log, and the composed
+// dense/MSE/binary-cross-entropy helpers. Same finite-difference
+// cross-check discipline as tests/test_graph_core.vani (v0.3.0) --
+// every gradient is validated against calculus::diff_central, not just
+// "looks right" from reading the backward rule.
+
+#[test]
+fn test_graph_relu_gradient_positive_branch() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 3.0);
+    let root: i64 = graph_relu(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 3.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    assert abs(grads[x] - 1.0) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 3.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 3.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_relu_gradient_negative_branch() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 0.0 - 3.0);
+    let root: i64 = graph_relu(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 0.0) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    assert abs(grads[x] - 0.0) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, (0.0 - 3.0) + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, (0.0 - 3.0) - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_sigmoid_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 0.5);
+    let root: i64 = graph_sigmoid(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 0.5 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 0.5 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_tanh_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 0.5);
+    let root: i64 = graph_tanh(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 0.5 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 0.5 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+#[test]
+fn test_graph_log_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 2.0);
+    let root: i64 = graph_log(mut ref arena, x);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    // d(log x)/dx = 1/x = 0.5 at x=2
+    assert abs(grads[x] - 0.5) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 2.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 2.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+// Composition test: a Relu(Sigmoid(x)) chain, checking the two new
+// activations correctly compose through the SAME backward machinery
+// used for the primitive ops (no special-casing needed at the
+// composition boundary).
+#[test]
+fn test_graph_activation_composition_gradient() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x: i64 = graph_param(mut ref arena, 0.3);
+    let s: i64 = graph_sigmoid(mut ref arena, x);
+    let root: i64 = graph_tanh(mut ref arena, s);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, x, 0.3 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, x, 0.3 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dx: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[x] - numeric_dx) < 1.0e-6;
+    return 0;
+}
+
+// Dense layer: 2 inputs -> 1 output, dot(inputs, weights) + bias.
+// x=[2.0, 3.0], w=[0.5, 0.25], bias=1.0 -> 2*0.5 + 3*0.25 + 1.0 = 2.75.
+#[test]
+fn test_graph_dense_layer() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let x0: i64 = graph_param(mut ref arena, 2.0);
+    let x1: i64 = graph_param(mut ref arena, 3.0);
+    let w0: i64 = graph_param(mut ref arena, 0.5);
+    let w1: i64 = graph_param(mut ref arena, 0.25);
+    let bias: i64 = graph_param(mut ref arena, 1.0);
+    let inputs: Vec<i64> = vec(x0, x1);
+    let weights: Vec<i64> = vec(w0, w1);
+    let root: i64 = graph_dense(mut ref arena, ref inputs, ref weights, bias);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 2.75) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    // d(root)/dw0 = x0 = 2.0, d(root)/dbias = 1.0
+    assert abs(grads[w0] - 2.0) < 1.0e-9;
+    assert abs(grads[bias] - 1.0) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, w0, 0.5 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, w0, 0.5 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dw0: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[w0] - numeric_dw0) < 1.0e-6;
+    return 0;
+}
+
+// MSE loss over 2 predictions: preds=[3.0, 5.0] (as Params so gradients
+// are checkable), targets=[2.0, 5.0] -> mean((3-2)^2, (5-5)^2) = 0.5.
+#[test]
+fn test_graph_mse_loss() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let p0: i64 = graph_param(mut ref arena, 3.0);
+    let p1: i64 = graph_param(mut ref arena, 5.0);
+    let preds: Vec<i64> = vec(p0, p1);
+    let targets: Vec<f64> = vec(2.0, 5.0);
+    let root: i64 = graph_mse_loss(mut ref arena, ref preds, ref targets);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    assert abs(values[root] - 0.5) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    // d(mean((p-t)^2))/dp0 = 2*(p0-t0)/n = 2*1.0/2 = 1.0
+    assert abs(grads[p0] - 1.0) < 1.0e-9;
+
+    let h: f64 = 1.0e-5;
+    let _s1: i64 = graph_set_value(mut ref arena, p0, 3.0 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, p0, 3.0 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dp0: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[p0] - numeric_dp0) < 1.0e-6;
+    return 0;
+}
+
+// Binary cross-entropy over 1 example: pred (post-sigmoid, a Param
+// directly in (0,1) to keep this test focused on the loss's own
+// gradient rather than composing through graph_sigmoid too) = 0.7,
+// target = 1.0 -> -log(0.7).
+#[test]
+fn test_graph_binary_cross_entropy_loss() -> i64 {
+    let arena: Vec<GraphNode> = graph_arena_new();
+    let p0: i64 = graph_param(mut ref arena, 0.7);
+    let preds: Vec<i64> = vec(p0);
+    let targets: Vec<f64> = vec(1.0);
+    let root: i64 = graph_binary_cross_entropy_loss(mut ref arena, ref preds, ref targets);
+
+    let values: Vec<f64> = graph_forward(ref arena);
+    let expected: f64 = 0.0 - log(0.7);
+    assert abs(values[root] - expected) < 1.0e-9;
+
+    let grads: Vec<f64> = graph_backward(ref arena, ref values, root);
+    let h: f64 = 1.0e-6;
+    let _s1: i64 = graph_set_value(mut ref arena, p0, 0.7 + h);
+    let vph: Vec<f64> = graph_forward(ref arena);
+    let _s2: i64 = graph_set_value(mut ref arena, p0, 0.7 - h);
+    let vmh: Vec<f64> = graph_forward(ref arena);
+    let numeric_dp0: f64 = calculus::diff_central(vmh[root], vph[root], h);
+    assert abs(grads[p0] - numeric_dp0) < 1.0e-5;
+    return 0;
+}
+
+fn main() -> i64 { return 0; }
