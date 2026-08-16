@@ -218,16 +218,45 @@ suite (all 8 test files, both backends) and all 3 examples (both
 backends) pass. `examples/layers_demo.vani` (new file) walks through a
 one-neuron dense->sigmoid->binary-cross-entropy chain end to end.
 
-## v0.5.0 — Optimizers over the graph (not started)
+## v0.5.0 — Optimizers over the graph ✅ implemented 2026-08-16
 
 Depends on: v0.3.0.
 
-- [ ] SGD
-- [ ] Momentum
-- [ ] Adam
-- [ ] Note: vani-optimize's existing solvers don't fit this signature
+- [x] SGD — `graph_sgd_step`, stateless (`param -= lr * grad`).
+- [x] Momentum — `MomentumState`/`momentum_state_new`/
+      `graph_momentum_step` (`v = beta*v - lr*grad; param += v`).
+- [x] Adam — `AdamState`/`adam_state_new`/`graph_adam_step`, bias-corrected
+      first/second moment estimates, standard update rule.
+- [x] Note: vani-optimize's existing solvers don't fit this signature
       (per-graph gradient vector, not `fn(ref Vec<f64>) -> f64`) — new code,
-      same underlying math, not a straight reuse
+      same underlying math, not a straight reuse (confirmed during
+      implementation, not just anticipated).
+- [x] **Design note**: `MomentumState`/`AdamState` are indexed by
+      *position in the caller's `params` Vec*, not by arena index — a
+      caller training 3 params out of a 50-node arena gets a 3-element
+      state, not a 50-element one. Each `*_step` function returns a
+      FRESH state struct (`return MomentumState { velocity: new_velocity
+      }`) rather than mutating one in place, matching this file's own
+      dominant "construct once, return" convention
+      (`KMeansResult`/`TrainTestSplit`/`KFoldSplit`) — also sidesteps
+      needing direct struct-field-assignment syntax
+      (`state.t = state.t + 1`), which has no precedent anywhere in this
+      ecosystem's code to confirm works.
+- [x] Validation (`tests/test_graph_optimizers.vani`, 6 tests): a
+      hand-computed single-step exactness check per optimizer (using a
+      FABRICATED `grads` Vec, isolating the optimizer's own arithmetic
+      from autodiff correctness, already covered separately), plus a
+      convergence check per optimizer (minimizing `f(x)=(x-3)^2` via
+      `graph_mse_loss` over 200-300 iterations from `x=0`, the actual
+      point of having an optimizer — not just correct single-step math).
+      All 3 converge to within `1e-3` of the target on both backends;
+      `examples/optimizer_demo.vani` (new file) runs all three side by
+      side.
+
+Full verification: `vanic audit-safety` reports full `#[bounded_stack]`/
+`#[wcet]` coverage (50 functions checked, 0 gaps). Full `vanic test`
+suite (all 9 test files, both backends) and all 4 examples (both
+backends) pass.
 
 ## v0.6.0+ — Training-loop utilities (optional/stretch, not started)
 

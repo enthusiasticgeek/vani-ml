@@ -1164,3 +1164,147 @@ fn graph_binary_cross_entropy_loss(arena: mut ref Vec<GraphNode>, preds: ref Vec
     let mean: i64 = graph_mul(arena, sum, inv_n);
     return graph_neg(arena, mean);
 }
+
+// ── v0.5.0: Optimizers over the graph's parameter vector ────────────────
+//
+// `params: ref Vec<i64>` is the list of arena indices a caller wants
+// trained (must all be Param leaves -- graph_set_value already asserts
+// that per-index). `grads: ref Vec<f64>` is graph_backward's own output,
+// indexed by arena index (NOT by position in `params`) -- exactly what
+// backward already returns, no repacking needed at the call site.
+//
+// MomentumState/AdamState hold per-parameter running state (velocity, or
+// the first/second moment estimates + step count) INDEXED BY POSITION IN
+// `params`, not by arena index -- a caller with e.g. 3 trainable params
+// scattered across a 50-node arena gets a 3-element state, not a
+// 50-element one wasting space on non-trained nodes.
+//
+// Each step function returns a FRESH state struct rather than mutating
+// one in place, matching this file's own dominant convention
+// (KMeansResult/TrainTestSplit/KFoldSplit are all constructed once and
+// returned, never mutated after) -- also sidesteps needing direct
+// struct-field-assignment syntax (`state.t = state.t + 1`), which has no
+// precedent anywhere in this ecosystem's existing code to confirm works;
+// `MomentumState { velocity: new_velocity }`/`AdamState { m: new_m, v:
+// new_v, t: t_new }` construction is the same pattern every constructor
+// in this file already uses successfully.
+//
+// vani-optimize's existing solvers (gradient_descent_fixed/backtracking)
+// don't fit here -- their objective/gradient are a fixed
+// `fn(ref Vec<f64>, i64) -> f64` signature built for a flat parameter
+// Vec, not a per-graph-node gradient sparse over a much larger arena;
+// same "new code, same underlying math, not a straight reuse" situation
+// this package's own logreg_fit already documented for v0.1.0.
+
+// Plain SGD: param -= lr * grad. Stateless (no momentum/moment
+// estimates), so no state struct needed.
+// NO #[wcet]: len(params) is a runtime value.
+// WCET formula: ~20 + len(params) * (graph_set_value's 68 + ~10).
+#[bounded_stack(bytes = 248)]
+fn graph_sgd_step(arena: mut ref Vec<GraphNode>, params: ref Vec<i64>, grads: ref Vec<f64>, lr: f64) -> i64 {
+    let n: i64 = len(params) as i64;
+    let i: i64 = 0;
+    while i < n {
+        let idx: i64 = params[i];
+        let node: GraphNode = arena[idx];
+        let new_val: f64 = node.value - lr * grads[idx];
+        let _s: i64 = graph_set_value(arena, idx, new_val);
+        i = i + 1;
+    }
+    return 0;
+}
+
+struct MomentumState {
+    velocity: Vec<f64>,
+}
+
+// Zero-initialized momentum state for `n_params` trainable parameters
+// (same length as the `params` Vec a caller will pass to
+// graph_momentum_step, NOT the arena's own length).
+#[bounded_stack(bytes = 112)]
+fn momentum_state_new(n_params: i64) -> MomentumState {
+    let velocity: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_params {
+        push(mut ref velocity, 0.0);
+        i = i + 1;
+    }
+    return MomentumState { velocity: velocity };
+}
+
+// Classical momentum: v = beta*v - lr*grad; param += v. `beta` is
+// typically ~0.9 (fraction of the previous step's velocity retained).
+// NO #[wcet]: len(params) is a runtime value.
+// WCET formula: ~20 + len(params) * (graph_set_value's 68 + ~15).
+#[bounded_stack(bytes = 320)]
+fn graph_momentum_step(arena: mut ref Vec<GraphNode>, params: ref Vec<i64>, grads: ref Vec<f64>, state: ref MomentumState, lr: f64, beta: f64) -> MomentumState {
+    let n: i64 = len(params) as i64;
+    let new_velocity: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let idx: i64 = params[i];
+        let v_new: f64 = beta * state.velocity[i] - lr * grads[idx];
+        push(mut ref new_velocity, v_new);
+        let node: GraphNode = arena[idx];
+        let updated: f64 = node.value + v_new;
+        let _s: i64 = graph_set_value(arena, idx, updated);
+        i = i + 1;
+    }
+    return MomentumState { velocity: new_velocity };
+}
+
+struct AdamState {
+    m: Vec<f64>,
+    v: Vec<f64>,
+    t: i64,
+}
+
+// Zero-initialized Adam state for `n_params` trainable parameters, step
+// counter t=0 (graph_adam_step increments it internally on the FIRST
+// call, so bias correction is against t=1, not t=0 -- 1 - beta^0 = 0
+// would divide by zero).
+#[bounded_stack(bytes = 160)]
+fn adam_state_new(n_params: i64) -> AdamState {
+    let m: Vec<f64> = vec();
+    let v: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n_params {
+        push(mut ref m, 0.0);
+        push(mut ref v, 0.0);
+        i = i + 1;
+    }
+    return AdamState { m: m, v: v, t: 0 };
+}
+
+// Adam: bias-corrected running estimates of the gradient's mean (m) and
+// uncentered variance (v), standard defaults beta1=0.9, beta2=0.999,
+// eps=1e-8 (a caller-supplied param here, not hardcoded, so a test can
+// use a larger eps if a param's true v_hat could legitimately be ~0).
+// NO #[wcet]: len(params) is a runtime value.
+// WCET formula: ~30 + len(params) * (graph_set_value's 68 + ~35).
+#[bounded_stack(bytes = 424)]
+fn graph_adam_step(arena: mut ref Vec<GraphNode>, params: ref Vec<i64>, grads: ref Vec<f64>, state: ref AdamState, lr: f64, beta1: f64, beta2: f64, eps: f64) -> AdamState {
+    let t_new: i64 = state.t + 1;
+    let t_f: f64 = t_new as f64;
+    let bias_correction1: f64 = 1.0 - pow(beta1, t_f);
+    let bias_correction2: f64 = 1.0 - pow(beta2, t_f);
+    let n: i64 = len(params) as i64;
+    let new_m: Vec<f64> = vec();
+    let new_v: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        let idx: i64 = params[i];
+        let g: f64 = grads[idx];
+        let m_new: f64 = beta1 * state.m[i] + (1.0 - beta1) * g;
+        let v_new: f64 = beta2 * state.v[i] + (1.0 - beta2) * g * g;
+        push(mut ref new_m, m_new);
+        push(mut ref new_v, v_new);
+        let m_hat: f64 = m_new / bias_correction1;
+        let v_hat: f64 = v_new / bias_correction2;
+        let node: GraphNode = arena[idx];
+        let updated: f64 = node.value - lr * m_hat / (sqrt(v_hat) + eps);
+        let _s: i64 = graph_set_value(arena, idx, updated);
+        i = i + 1;
+    }
+    return AdamState { m: new_m, v: new_v, t: t_new };
+}

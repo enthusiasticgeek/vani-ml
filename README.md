@@ -6,8 +6,8 @@ breakdown, and risk notes live in
 [kosh-index/ROADMAP.md](https://github.com/enthusiasticgeek/kosh-index/blob/main/ROADMAP.md#planned-ml-tier-scoped-2026-07-25) --
 this README tracks only what's actually implemented.
 
-**Status (2026-08-16): v0.1.0-v0.4.0 implemented and passing** (8 test
-files under `vanic test`, LLVM and C backends both verified on all 3
+**Status (2026-08-16): v0.1.0-v0.5.0 implemented and passing** (9 test
+files under `vanic test`, LLVM and C backends both verified on all 4
 examples, `vanic audit-safety` reports full `#[bounded_stack]`/`#[wcet]`
 coverage). Full SMT verification (`vanic check` without `--no-verify`)
 is slow/hangs on this package -- a known, pre-existing compiler
@@ -62,7 +62,7 @@ as explicit `mut ref Vec<f64>` arguments instead of captured. See
 ROADMAP.md for the full writeup of why this was resolved without a
 compiler change.
 
-## What's included (v0.1.0-v0.4.0)
+## What's included (v0.1.0-v0.5.0)
 
 | Module | Functions |
 |---|---|
@@ -74,11 +74,13 @@ compiler change.
 | Data utilities (v0.2.0) | `StandardScaler`/`standardize_fit`/`standardize_apply`, `MinMaxScaler`/`normalize_fit`/`normalize_apply`, `one_hot_encode`, `Dataset`, `KFoldSplit`/`k_fold_split` |
 | Autodiff core (v0.3.0) | `GraphNode`, `graph_arena_new`, `graph_const`/`graph_param`, `graph_add`/`graph_sub`/`graph_mul`/`graph_div`/`graph_neg`, `graph_set_value`, `graph_forward`, `graph_backward` -- flat-arena reverse-mode automatic differentiation, no recursion (see TODO.md's v0.3.0 writeup for the full design) |
 | Layers/activations/losses (v0.4.0) | `graph_relu`/`graph_sigmoid`/`graph_tanh`/`graph_log` (new node kinds), `graph_dense` (composed dot-product + bias), `graph_mse_loss`, `graph_binary_cross_entropy_loss` -- all composed from the v0.3.0 primitives, no dependency on `vani-matrix`/`vani-tensor` needed. `softmax` deliberately out of scope (multi-output, structural mismatch with this design; see TODO.md) |
+| Optimizers (v0.5.0) | `graph_sgd_step` (stateless), `MomentumState`/`momentum_state_new`/`graph_momentum_step`, `AdamState`/`adam_state_new`/`graph_adam_step` -- each `*_step` returns a fresh state struct rather than mutating in place |
 
 All `X_flat` arguments are row-major `n_obs x n_pred` (or `n_obs x n_dim` for
 k-means), matching `vani-matrix`/`vani-probability`/`vani-tensor`'s shared layout.
-See `examples/ml_demo.vani`, `examples/autodiff_demo.vani`, and
-`examples/layers_demo.vani` for end-to-end tours.
+See `examples/ml_demo.vani`, `examples/autodiff_demo.vani`,
+`examples/layers_demo.vani`, and `examples/optimizer_demo.vani` for
+end-to-end tours.
 
 ## Known upstream issue found while building this
 

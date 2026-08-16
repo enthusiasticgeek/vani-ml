@@ -1,0 +1,68 @@
+// A quick tour of vani-ml v0.5.0's optimizers: fit a single scalar
+// parameter to minimize f(x) = (x - 3)^2 with SGD, Momentum, and Adam,
+// each starting from x=0 -- shows the same training loop shape
+// (forward -> backward -> optimizer step) works with any of the three.
+// Run with:  vanic run examples/optimizer_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // ── SGD ───────────────────────────────────────────────────────────
+    let arena1: Vec<GraphNode> = graph_arena_new();
+    let x1: i64 = graph_param(mut ref arena1, 0.0);
+    let preds1: Vec<i64> = vec(x1);
+    let targets: Vec<f64> = vec(3.0);
+    let loss1: i64 = graph_mse_loss(mut ref arena1, ref preds1, ref targets);
+    let params1: Vec<i64> = vec(x1);
+
+    let iter1: i64 = 0;
+    while iter1 < 200 {
+        let values: Vec<f64> = graph_forward(ref arena1);
+        let grads: Vec<f64> = graph_backward(ref arena1, ref values, loss1);
+        let _s: i64 = graph_sgd_step(mut ref arena1, ref params1, ref grads, 0.3);
+        iter1 = iter1 + 1;
+    }
+    let final1: Vec<f64> = graph_forward(ref arena1);
+    print "SGD:      x after 200 steps (target 3.0):";
+    print final1[x1];
+
+    // ── Momentum ──────────────────────────────────────────────────────
+    let arena2: Vec<GraphNode> = graph_arena_new();
+    let x2: i64 = graph_param(mut ref arena2, 0.0);
+    let preds2: Vec<i64> = vec(x2);
+    let loss2: i64 = graph_mse_loss(mut ref arena2, ref preds2, ref targets);
+    let params2: Vec<i64> = vec(x2);
+    let mstate: MomentumState = momentum_state_new(1);
+
+    let iter2: i64 = 0;
+    while iter2 < 300 {
+        let values2: Vec<f64> = graph_forward(ref arena2);
+        let grads2: Vec<f64> = graph_backward(ref arena2, ref values2, loss2);
+        mstate = graph_momentum_step(mut ref arena2, ref params2, ref grads2, ref mstate, 0.05, 0.9);
+        iter2 = iter2 + 1;
+    }
+    let final2: Vec<f64> = graph_forward(ref arena2);
+    print "Momentum: x after 300 steps (target 3.0):";
+    print final2[x2];
+
+    // ── Adam ──────────────────────────────────────────────────────────
+    let arena3: Vec<GraphNode> = graph_arena_new();
+    let x3: i64 = graph_param(mut ref arena3, 0.0);
+    let preds3: Vec<i64> = vec(x3);
+    let loss3: i64 = graph_mse_loss(mut ref arena3, ref preds3, ref targets);
+    let params3: Vec<i64> = vec(x3);
+    let astate: AdamState = adam_state_new(1);
+
+    let iter3: i64 = 0;
+    while iter3 < 300 {
+        let values3: Vec<f64> = graph_forward(ref arena3);
+        let grads3: Vec<f64> = graph_backward(ref arena3, ref values3, loss3);
+        astate = graph_adam_step(mut ref arena3, ref params3, ref grads3, ref astate, 0.1, 0.9, 0.999, 1.0e-8);
+        iter3 = iter3 + 1;
+    }
+    let final3: Vec<f64> = graph_forward(ref arena3);
+    print "Adam:     x after 300 steps (target 3.0):";
+    print final3[x3];
+
+    return 0;
+}
