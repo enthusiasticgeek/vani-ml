@@ -16,6 +16,8 @@ characteristic unrelated to this package's code (see TODO.md's v0.3.0
 closure writeup); use `VANIC_NO_VERIFY=1` for fast iteration. See
 TODO.md for the phase checklist.
 
+**API reference / tutorial:** <https://enthusiasticgeek.github.io/vani-ml/>
+
 ## Why classical ML first
 
 v0.1.0-v0.2.0 are mostly glue over already-published packages (`vani-probability`'s
