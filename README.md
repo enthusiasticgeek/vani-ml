@@ -36,7 +36,7 @@ at two capability levels -- staged as versions in one repo, the same way
 ```toml
 # vani.toml
 [deps]
-ml = { registry = "kosh", version = "^0.1" }
+ml = { registry = "kosh", version = "^0.6" }
 ```
 
 ```sh
