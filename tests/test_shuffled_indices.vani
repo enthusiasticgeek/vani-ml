@@ -1,0 +1,64 @@
+intent "shuffled_indices: seeded Fisher-Yates permutation utility, previously exercised only transitively via train_test_split/k_fold_split, never called directly in tests";
+
+use "../src/lib.vani";
+
+fn is_permutation(idx: ref Vec<i64>, n: i64) -> bool {
+    let seen: Vec<bool> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref seen, false);
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let v: i64 = idx[i];
+        if v < 0 || v >= n {
+            return false;
+        }
+        if seen[v] {
+            return false;
+        }
+        set(mut ref seen, v, true);
+        i = i + 1;
+    }
+    return true;
+}
+
+fn main() -> i64 {
+    // Same seed must reproduce the exact same permutation (determinism is
+    // the whole point of taking a seed argument).
+    let a: Vec<i64> = shuffled_indices(10, 42);
+    let b: Vec<i64> = shuffled_indices(10, 42);
+    assert (len(ref a) as i64) == 10;
+    let i: i64 = 0;
+    while i < 10 {
+        assert a[i] == b[i];
+        i = i + 1;
+    }
+    assert is_permutation(ref a, 10);
+
+    // A different seed should (almost certainly) produce a different
+    // ordering -- not a strict correctness requirement, but a real
+    // regression would be shuffled_indices ignoring `seed` entirely.
+    let c: Vec<i64> = shuffled_indices(10, 7);
+    assert is_permutation(ref c, 10);
+    let differs: bool = false;
+    i = 0;
+    while i < 10 {
+        if a[i] != c[i] {
+            differs = true;
+        }
+        i = i + 1;
+    }
+    assert differs;
+
+    // Edge cases: n=0 -> empty, n=1 -> the only possible permutation [0].
+    let empty: Vec<i64> = shuffled_indices(0, 1);
+    assert (len(ref empty) as i64) == 0;
+
+    let single: Vec<i64> = shuffled_indices(1, 1);
+    assert (len(ref single) as i64) == 1;
+    assert single[0] == 0;
+
+    return 0;
+}
