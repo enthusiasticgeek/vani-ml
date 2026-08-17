@@ -311,5 +311,5 @@ roadmap (v0.1.0 through v0.6.0+) in one session.
 ## Future / explicitly out of scope for now
 
 - CNN/RNN-specific layers — not scoped; revisit only if a real use case shows up
-- GPU/SIMD-accelerated ops — depends on vāṇी compiler SIMD support maturity,
+- GPU/SIMD-accelerated ops — depends on vāṇī compiler SIMD support maturity,
   tracked separately in vani-compiler's docs

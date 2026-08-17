@@ -1,4 +1,4 @@
-// vani-ml — machine learning for vāṇी
+// vani-ml — machine learning for vāṇī
 //
 // See TODO.md for the phase checklist and kosh-index/ROADMAP.md's
 // "vani-ml scoping breakdown" for full scope, architecture decisions,
@@ -15,7 +15,7 @@
 // for kmeans), matching vani-matrix/vani-probability/vani-tensor's shared
 // layout -- row i, column j lives at X_flat[i * n_pred + j].
 //
-// IMPORTANT -- do NOT reimplement vāṇी compiler builtins already used
+// IMPORTANT -- do NOT reimplement vāṇī compiler builtins already used
 // throughout this file: push len vec sqrt exp log tanh f64_sigmoid abs
 // seed_rng rand_in_range rand_in_range_f64 vec_swap vec_mean i64_min
 
@@ -71,7 +71,7 @@ fn linreg_r_squared(y: ref Vec<f64>, y_hat: ref Vec<f64>) -> f64 {
 // Deliberately NOT built on optimize::gradient_descent_fixed/backtracking:
 // their objective/gradient are fixed `fn(ref Vec<f64>, i64) -> f64`
 // function pointers with no way to thread the training data (X_flat, y)
-// through -- vāṇी closures don't support ref-capturing (see this repo's
+// through -- vāṇī closures don't support ref-capturing (see this repo's
 // README / kosh-index/ROADMAP.md's "ML tier" section for the full
 // writeup). So logreg_fit below has its own small fixed-step loop,
 // specialized directly to (X_flat, y, beta) -- same algorithm shape as
@@ -755,7 +755,7 @@ fn k_fold_split(X_flat: ref Vec<f64>, y: ref Vec<f64>, n_obs: i64, n_dim: i64, k
 //
 // ENCODING: flat arena, same "Vec<Node> + i64 child indices, kind-tag
 // dispatch" workaround vani-symbolic uses for its expression tree (a
-// recursive enum doesn't compile in vāṇी today -- see vani-symbolic's own
+// recursive enum doesn't compile in vāṇī today -- see vani-symbolic's own
 // header comment for the full rationale). GraphNode is Copy (four
 // fields, no heap-owning field), matching ExprNode's own precedent.
 //

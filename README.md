@@ -1,6 +1,6 @@
 # vani-ml
 
-Machine learning library for the [vāṇी compiler](https://github.com/enthusiasticgeek/vani-compiler).
+Machine learning library for the [vāṇī compiler](https://github.com/enthusiasticgeek/vani-compiler).
 Staged: classical ML first, an autodiff/neural-net engine on top. Full scope, phase
 breakdown, and risk notes live in
 [kosh-index/ROADMAP.md](https://github.com/enthusiasticgeek/kosh-index/blob/main/ROADMAP.md#planned-ml-tier-scoped-2026-07-25) --
@@ -48,7 +48,7 @@ vanic build
 
 ## Design note: no ref-capturing closures -- and it already mattered in v0.1.0
 
-vāṇी's closures support move/Copy captures (shipped 2026-07-15) but not
+vāṇī's closures support move/Copy captures (shipped 2026-07-15) but not
 ref-capturing closures -- that's compiler path-D, deferred indefinitely (see
 `vani-compiler/docs/missing_features.md`, "Lifetime variables"). This wasn't
 just a v0.3.0-autodiff concern: it already bit `logreg_fit` in v0.1.0.
